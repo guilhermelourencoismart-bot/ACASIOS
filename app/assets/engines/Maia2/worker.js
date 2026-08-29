@@ -7,14 +7,17 @@ let board = null;
 let engine = null;
 
 (async () => {
-    await loadMoves();
-    board = new Chess();
+	try {
+		await loadMoves();
+		board = new Chess();
 
-    const maia = new Maia('maia_rapid.onnx', Chess, board);
+		const maia = new Maia('maia_rapid.onnx', Chess, board);
+		await maia.initPromise;
 
-    while(!maia.ready) await new Promise(r => setTimeout(r, 50));
-
-    engine = maia;
+		engine = maia;
+	} catch(error) {
+		postMessage({ type: 'acas_error', message: error?.message || String(error) });
+	}
 })();
 
 onmessage = e => {

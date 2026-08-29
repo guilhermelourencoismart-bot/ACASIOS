@@ -36,7 +36,10 @@
 		display: none !important;
 	}
 	#settings-navbar-container {
-		display: none !important;
+		display: block !important;
+		width: 100% !important;
+		overflow-x: auto !important;
+		-webkit-overflow-scrolling: touch;
 	}
 	#settings-header {
 		justify-content: center !important;
@@ -113,8 +116,112 @@ body {
 	margin: 0;
 	background-color: #5f8895;
 	height: 100vh;
+	min-height: 100dvh;
 	display: flex;
 	flex-direction: column;
+}
+
+.instance-control-status {
+	min-height: 18px;
+	padding: 4px 8px;
+	font-size: 12px;
+	font-weight: 650;
+	color: rgb(255 255 255 / 82%);
+	text-align: center;
+}
+
+.fun-engine-tag {
+	background: linear-gradient(135deg, #9456d8, #d5529f) !important;
+	color: white !important;
+}
+
+.fun-engine-item {
+	background-image: linear-gradient(90deg, rgb(148 86 216 / 8%), transparent);
+}
+
+.move-control-panel {
+	width: min(720px, 100%);
+	max-width: 720px !important;
+	box-sizing: border-box;
+}
+
+.control-panel-description,
+.control-warning {
+	padding: 10px 12px;
+	border-radius: 8px;
+	line-height: 1.4;
+	background: rgb(0 0 0 / 12%);
+}
+
+.control-warning {
+	font-size: 12px;
+	border: 1px solid rgb(255 188 77 / 35%);
+}
+
+.control-subsection-title {
+	margin-top: 8px;
+	font-weight: 750;
+}
+
+.move-control-sliders {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 8px;
+}
+
+.repertoire-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+}
+
+@media (max-width: 800px), (pointer: coarse) {
+	body {
+		height: auto;
+		min-height: 100dvh;
+		padding-left: env(safe-area-inset-left);
+		padding-right: env(safe-area-inset-right);
+	}
+
+	#acas-header {
+		padding-top: max(6px, env(safe-area-inset-top));
+	}
+
+	#footer {
+		padding-bottom: max(6px, env(safe-area-inset-bottom));
+	}
+
+	#settings-navbar {
+		min-width: max-content;
+	}
+
+	.dropdown-item,
+	.acas-fancy-button,
+	.custom-input input,
+	button {
+		min-height: 44px;
+	}
+
+	dialog {
+		max-width: calc(100vw - 16px) !important;
+		max-height: calc(100dvh - 16px) !important;
+		margin: 8px auto !important;
+	}
+
+	.floaty-body {
+		-webkit-overflow-scrolling: touch;
+	}
+
+	.move-control-panel {
+		width: 100%;
+	}
+}
+
+@media (max-width: 620px) {
+	.move-control-sliders,
+	.repertoire-grid {
+		grid-template-columns: 1fr;
+	}
 }
 cg-board {
 	background-color: rgb(255 255 255 / 70%);
@@ -1842,4 +1949,45 @@ video {
     filter: blur(1px);
 	pointer-events: none;
     user-select: none;
+}
+
+/* Final mobile overrides must stay after the desktop layout rules. */
+@media (max-width: 800px), (pointer: coarse) {
+	#acas-header {
+		box-sizing: border-box;
+		width: 100%;
+		flex-wrap: wrap;
+	}
+
+	#acas-settings-container,
+	#setting-container,
+	#settings-panels,
+	.setting-panel {
+		box-sizing: border-box;
+		width: 100% !important;
+		max-width: 100% !important;
+	}
+
+	#settings-navbar-container {
+		display: block !important;
+		max-width: 100vw;
+		overflow-x: auto;
+	}
+
+	.acas-instance {
+		width: min(100%, calc(100vw - 16px)) !important;
+		max-width: calc(100vw - 16px) !important;
+	}
+
+	.floaty-container,
+	.floaty-body {
+		box-sizing: border-box;
+		max-width: calc(100vw - 24px) !important;
+	}
+
+	.dropdown-list-container {
+		max-height: min(48dvh, 360px);
+		overflow-y: auto;
+		-webkit-overflow-scrolling: touch;
+	}
 }

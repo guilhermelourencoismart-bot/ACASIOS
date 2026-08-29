@@ -4,7 +4,6 @@ import { onDynamicOptionsReady, resetDynamicOptionsReady } from '../gui/dynamicE
 async function startWithBasicOptions(variant, engineName, profile) {
     const elo = await this.getConfigValue(this.configKeys.engineElo, profile);
 
-    this.setEngineMultiPV(await this.getConfigValue(this.configKeys.moveSuggestionAmount, profile), profile);
     this.setEngineShowWDL(true, profile);
 
     if(engineName !== 'lc0') this.setEngineVariant(variant, profile);
@@ -75,6 +74,12 @@ export default async function engineStartNewGame(variant, profile) {
 
         if(isAdvancedElo) await startWithDynamicOptions.bind(this)(chessVariant, engineName, profileName);
         else await startWithBasicOptions.bind(this)(chessVariant, engineName, profileName);
+
+        const visibleMoves = Number(await this.getConfigValue(this.configKeys.moveSuggestionAmount, profileName)) || 0;
+        const candidatePool = Number(await this.getConfigValue(this.configKeys.candidatePoolSize, profileName)) || visibleMoves;
+        const engineMultiPV = Math.max(1, Math.min(20, Math.max(visibleMoves, candidatePool)));
+        this.pV[profileName].visibleMoveCount = visibleMoves;
+        this.setEngineMultiPV(engineMultiPV, profileName);
 
         this.sendMsgToEngine('position startpos', profileName);
         if(engineName !== 'lc0') this.sendMsgToEngine('d', profileName);

@@ -2,6 +2,9 @@ import { createInstance } from './instanceManager.js';
 import { installNotificationElem, autoMoveCheckbox, hiddenSettingPanel, tosCheckboxElem,
     tosContinueBtnElem, tosContainerElem } from './gui/elementDeclarations.js';
 import { highlightSettingElem, initGUI } from './gui.js';
+import { initializeMobileRuntime } from './mobileRuntime.js';
+
+initializeMobileRuntime();
 
 let started = false;
 

@@ -81,18 +81,31 @@ let session = null;
 let modelUrl = null;
 let modelVersion = null;
 
+const isIOS = /iPad|iPhone|iPod/i.test(navigator.userAgent)
+	|| (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
 async function initSession(buffer) {
-	session = await ort.InferenceSession.create(buffer, {
-		executionProviders: ['webgpu', 'wasm'],
-		webgpu: {
-			devicePreference: 'high-performance',
-			pipelineHint: 'fastest'
-		},
-		wasm: {
-			threads: navigator.hardwareConcurrency || 4,
-			simd: true
-		}
-	});
+	ort.env.wasm.numThreads = isIOS ? 1 : Math.max(1, Math.min(4, navigator.hardwareConcurrency || 2));
+	const wasmOptions = {
+		executionProviders: ['wasm'],
+		wasm: { threads: ort.env.wasm.numThreads, simd: true }
+	};
+
+	if(isIOS || !navigator.gpu) {
+		session = await ort.InferenceSession.create(buffer, wasmOptions);
+		return;
+	}
+
+	try {
+		session = await ort.InferenceSession.create(buffer, {
+			executionProviders: ['webgpu', 'wasm'],
+			webgpu: { devicePreference: 'high-performance', pipelineHint: 'fastest' },
+			wasm: wasmOptions.wasm
+		});
+	} catch(error) {
+		console.warn('Maia 3 WebGPU initialization failed, retrying with WASM.', error);
+		session = await ort.InferenceSession.create(buffer, wasmOptions);
+	}
 }
 
 self.onmessage = async (e) => {
@@ -105,7 +118,7 @@ self.onmessage = async (e) => {
 				modelVersion = msg.modelVersion;
 				postMessage({ type: 'status', status: 'loading' });
 
-				const buffer = await getCachedModel(modelUrl, modelVersion);
+				const buffer = await getCachedModel(modelUrl, modelVersion).catch(() => null);
 
 				if(buffer) {
 					await initSession(buffer);
@@ -125,7 +138,7 @@ self.onmessage = async (e) => {
 
 				let buffer;
 
-				if(response.body && typeof response.body.getReader === 'function') {
+				if(!isIOS && response.body && typeof response.body.getReader === 'function') {
 					const reader = response.body.getReader();
 					const contentLength = +(response.headers.get('Content-Length') || 0);
 					const chunks = [];
@@ -159,7 +172,8 @@ self.onmessage = async (e) => {
 					buffer = new Uint8Array(await response.arrayBuffer());
 				}
 
-				await storeModel(modelUrl, modelVersion, buffer.buffer);
+				await storeModel(modelUrl, modelVersion, buffer.buffer).catch(error =>
+					console.warn('Maia 3 model cache is unavailable.', error));
 				await initSession(buffer.buffer);
 
 				postMessage({ type: 'progress', progress: 100 });
