@@ -36,6 +36,7 @@ class MaiaEngine {
 				if(options.onError) options.onError(error);
 			}
 		});
+		this.initPromise = null;
 	}
 
 	async uci(line) {
@@ -148,9 +149,14 @@ class MaiaEngine {
 	}
 
 	async init() {
-		if(!this.ready) {
-			await this.download();
+		if(this.ready) return;
+		if(!this.initPromise) {
+			this.initPromise = this.download().catch(error => {
+				this.initPromise = null;
+				throw error;
+			});
 		}
+		await this.initPromise;
 	}
 
 	async download() {

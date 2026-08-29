@@ -9,6 +9,8 @@ let engine = null;
             onError: error => postMessage({ type: 'acas_error', message: error?.message || String(error) })
         });
 
+        // Signal readiness only after the model and WASM session are usable.
+        await engine.init();
         postMessage(true);
     } catch(error) {
         postMessage({ type: 'acas_error', message: error?.message || String(error) });

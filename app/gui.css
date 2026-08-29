@@ -143,6 +143,25 @@ body {
 	width: min(720px, 100%);
 	max-width: 720px !important;
 	box-sizing: border-box;
+	scroll-margin-top: 16px;
+}
+
+.move-lab-jump {
+	display: inline-flex;
+	align-items: center;
+	margin-left: 10px;
+	padding: 5px 10px;
+	border-radius: 999px;
+	font-size: 0.72em;
+	font-weight: 700;
+	color: var(--theme-color, #fff);
+	background: color-mix(in srgb, var(--theme-color, #c85a27) 18%, transparent);
+	text-decoration: none;
+}
+
+.move-lab-jump:hover,
+.move-lab-jump:focus-visible {
+	background: color-mix(in srgb, var(--theme-color, #c85a27) 32%, transparent);
 }
 
 .control-panel-description,
