@@ -20,17 +20,28 @@ export default class Neural {
 
 		console.log(buffer, this.modelUrl);
 
-		this.model = await ort.InferenceSession.create(buffer, {
-			executionProviders: ['webgpu', 'wasm'],
-			webgpu: {
-				devicePreference: 'high-performance',
-				pipelineHint: 'fastest'
-			},
-			wasm: {
-				threads: navigator.hardwareConcurrency || 4,
-				simd: true
+		const isIOS = /iPad|iPhone|iPod/i.test(navigator.userAgent)
+			|| (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+		ort.env.wasm.numThreads = isIOS ? 1 : Math.max(1, Math.min(4, navigator.hardwareConcurrency || 2));
+		const wasmOptions = {
+			executionProviders: ['wasm'],
+			wasm: { threads: ort.env.wasm.numThreads, simd: true }
+		};
+
+		if(isIOS || !navigator.gpu) {
+			this.model = await ort.InferenceSession.create(buffer, wasmOptions);
+		} else {
+			try {
+				this.model = await ort.InferenceSession.create(buffer, {
+					executionProviders: ['webgpu', 'wasm'],
+					webgpu: { devicePreference: 'high-performance', pipelineHint: 'fastest' },
+					wasm: wasmOptions.wasm
+				});
+			} catch(error) {
+				console.warn('Fusion WebGPU initialization failed, retrying with WASM.', error);
+				this.model = await ort.InferenceSession.create(buffer, wasmOptions);
 			}
-		});
+		}
 		this.ready = true;
 	}
 
@@ -174,3 +185,4 @@ export default class Neural {
 		};
 	}
 }
+
