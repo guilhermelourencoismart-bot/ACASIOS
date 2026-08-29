@@ -10,22 +10,34 @@ export default class Maia {
 		this.listen = () => null;
 		this.options = { eloSelf: 1500, eloOppo: 1500, multipv: 2 };
 
-		this.init();
+		this.initPromise = this.init();
 	}
 
 	async init() {
 		const buffer = await this.getCachedModel(this.modelUrl);
-		this.model = await ort.InferenceSession.create(buffer, {
-			executionProviders: ['webgpu', 'wasm'],
+		const isIOS = /iPad|iPhone|iPod/i.test(navigator.userAgent)
+			|| (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+		ort.env.wasm.numThreads = isIOS ? 1 : Math.max(1, Math.min(4, navigator.hardwareConcurrency || 2));
+		const wasmOptions = {
+			executionProviders: ['wasm'],
+			wasm: { threads: ort.env.wasm.numThreads, simd: true }
+		};
+		const preferredOptions = {
+			executionProviders: isIOS || !navigator.gpu ? ['wasm'] : ['webgpu', 'wasm'],
 			webgpu: {
 				devicePreference: 'high-performance',
 				pipelineHint: 'fastest'
 			},
-			wasm: {
-				threads: navigator.hardwareConcurrency || 4,
-				simd: true
-			}
-		});
+			wasm: wasmOptions.wasm
+		};
+
+		try {
+			this.model = await ort.InferenceSession.create(buffer, preferredOptions);
+		} catch(error) {
+			if(isIOS || !navigator.gpu) throw error;
+			console.warn('Maia 2 WebGPU initialization failed, retrying with WASM.', error);
+			this.model = await ort.InferenceSession.create(buffer, wasmOptions);
+		}
 
 		this.ready = true;
 	}
@@ -99,14 +111,19 @@ export default class Maia {
 	}
 
 	async getCachedModel(url) {
-		const cache = await caches.open('maia-model');
-		let res = await cache.match(url);
-		if(res) return res.arrayBuffer();
+		let cache = null;
+		try {
+			cache = await caches.open('maia-model');
+			const cached = await cache.match(url);
+			if(cached) return cached.arrayBuffer();
+		} catch(error) {
+			console.warn('Maia 2 cache is unavailable.', error);
+		}
 
-		res = await fetch(url);
+		const res = await fetch(url);
 		if(!res.ok) throw new Error('Failed to fetch model');
 
-		await cache.put(url, res.clone());
+		if(cache) await cache.put(url, res.clone()).catch(() => null);
 		return res.arrayBuffer();
 	}
 

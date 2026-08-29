@@ -12,6 +12,7 @@ import { getDynamicEngineDbKeyPrefix } from './gui/dynamicEngineOptions.js';
 import { getDynamicOption } from './gui/dynamicEngineOptions.js';
 import { removeInstance } from './instanceManager.js';
 import { updatePipData } from './gui/pip.js';
+import { rankControlledMoves } from './chess/MoveControl.js';
 
 const logEngineMessages = false,
       debugLogsEnabled = false;
@@ -32,7 +33,10 @@ const configKeys = Object.freeze([
     'renderPieceEnemyCapture', 'renderOnExternalSite', 'feedbackOnExternalSite',
     'enableMoveRatings', 'enableEnemyFeedback', 'feedbackEngineDepth',
     'enableAdvancedElo', 'advancedEloDepth', 'moveAsFilledSquares',
-    'movesOnDemand', 'onlySuggestPieces', 'externalChessEngine'
+    'movesOnDemand', 'onlySuggestPieces', 'externalChessEngine',
+    'playStyle', 'aggressionLevel', 'riskLevel', 'funMode',
+    'candidatePoolSize', 'repertoireMode', 'whiteRepertoire',
+    'blackRepertoire', 'repertoireMaxPly'
 ].reduce((o, k) => (o[k] = k, o), {}));
 
 export default class AcasInstance {
@@ -115,6 +119,9 @@ export default class AcasInstance {
                 this.engineNodes = null;
 
                 this.multiPV = 2;
+                this.visibleMoveCount = 2;
+                this.repertoireMoves = [];
+                this.moveControlReason = null;
         
                 this.currentMovetimeTimeout = null;
         
@@ -548,7 +555,8 @@ export default class AcasInstance {
     }
 
     async getEngineName(profile) {
-        return await this.getConfigValue(this.configKeys.chessEngine, profile);
+        const loadedEngine = this.engines.find(item => item.profileName === profile);
+        return loadedEngine?.type || await this.getConfigValue(this.configKeys.chessEngine, profile);
     }
 
     clearHistoryVariables(profileName) {
@@ -860,6 +868,50 @@ export default class AcasInstance {
         const displayMovesExternally = await this.getConfigValue(this.configKeys.displayMovesOnExternalSite, profile);
         const onlySuggestPieces = await this.getConfigValue(this.configKeys.onlySuggestPieces, profile);
         const movesOnDemand = await this.getConfigValue(this.configKeys.movesOnDemand, profile);
+
+        const [playStyle, aggression, risk, funMode, repertoireMode, visibleMoveCount] = await Promise.all([
+            this.getConfigValue(this.configKeys.playStyle, profile),
+            this.getConfigValue(this.configKeys.aggressionLevel, profile),
+            this.getConfigValue(this.configKeys.riskLevel, profile),
+            this.getConfigValue(this.configKeys.funMode, profile),
+            this.getConfigValue(this.configKeys.repertoireMode, profile),
+            this.getConfigValue(this.configKeys.moveSuggestionAmount, profile)
+        ]);
+
+        const controlFen = this.pV[profile]?.lastCalculatedFen || this.currentFen;
+        const isPlayerTurn = await this.isPlayerTurn(profile);
+        const incomingFutureMoves = moveObjects.filter(move => move.isFuture);
+        const controlledMoves = rankControlledMoves(moveObjects.filter(move => !move.isFuture), {
+            fen: controlFen,
+            style: isPlayerTurn ? playStyle : 'engine',
+            aggression,
+            risk,
+            funMode: isPlayerTurn ? funMode : 'off',
+            repertoireMoves: isPlayerTurn ? (this.pV[profile]?.repertoireMoves || []) : [],
+            repertoireMode: isPlayerTurn ? repertoireMode : 'off',
+            visibleCount: visibleMoveCount
+        });
+
+        moveObjects = [...controlledMoves, ...incomingFutureMoves];
+
+        const controlStatus = this.instanceElem?.querySelector('.instance-control-status');
+        const topControlledMove = controlledMoves[0];
+        if(controlStatus) {
+            const hasActiveControl = isPlayerTurn && (
+                (playStyle && !['engine', 'balanced'].includes(playStyle))
+                || (funMode && funMode !== 'off')
+                || (repertoireMode && repertoireMode !== 'off')
+            );
+            const activeMode = [
+                isPlayerTurn && playStyle && !['engine', 'balanced'].includes(playStyle) ? playStyle : null,
+                isPlayerTurn && funMode && funMode !== 'off' ? funMode : null,
+                hasActiveControl && topControlledMove?.controlReason !== 'engine' ? topControlledMove?.controlReason : null
+            ].filter(Boolean);
+            controlStatus.textContent = activeMode.length ? `🎛️ ${activeMode.join(' · ')}` : '';
+            controlStatus.title = topControlledMove
+                ? `Selected from the engine candidate pool. Control score: ${Math.round(topControlledMove.controlScore || 0)}`
+                : '';
+        }
 
         const normalMoves = moveObjects.filter(move => !move.isFuture);
 

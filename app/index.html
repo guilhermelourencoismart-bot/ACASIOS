@@ -8,7 +8,7 @@
 		<meta name="keywords" content="chess gui, chess assistant dashboard, stockfish settings, lichess helper, chess.com helper, board overlays, chess variants, engine elo">
 		<meta property="og:title" content="Advanced Chess Assist">
 		<meta property="og:description" content="A.C.A.S allows you to configure engines, visuals, and other assistance features for real‑time chess assistance on popular sites such as Chess.com.">
-		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 		<script src="coi-serviceworker.js?v=2"></script>
 		<link rel="manifest" href="manifest.json" />
 		<link rel="modulepreload" href="./assets/js/init.js">
@@ -25,6 +25,10 @@
 		<link rel="modulepreload" href="./assets/js/instance/calculateBestMoves.js">
 		<link rel="modulepreload" href="./assets/js/instance/setupEnvironment.js">
 		<link rel="modulepreload" href="./assets/js/instance/engineStartNewGame.js">
+		<link rel="modulepreload" href="./assets/js/mobileRuntime.js">
+		<link rel="modulepreload" href="./assets/js/platformCapabilities.js">
+		<link rel="modulepreload" href="./assets/js/chess/MoveControl.js">
+		<link rel="modulepreload" href="./assets/js/chess/OpeningRepertoire.js">
 		<link rel="modulepreload" href="../assets/libraries/chessgroundx/chessground.js">
 		<link rel="preload" href="./assets/openings/pgn.json" as="fetch" crossorigin>
 		<link rel="modulepreload" href="./assets/js/AcasWebSocketClient.js">
@@ -90,14 +94,14 @@
 				</div>
 				<div id="install-buttons-inner-container">
 					<a href="https://www.tampermonkey.net/" class="install-notification-btn tampermonkey-btn" target="_about">Tampermonkey</a>
-					<a href="https://greasyfork.org/en/scripts/459137" class="install-notification-btn install-userscript-btn" target="_about">Install Userscript</a>
+					<a href="../acas.user.js" class="install-notification-btn install-userscript-btn" target="_about">Install ACASIOS Userscript</a>
 				</div>
 			</div>
 			<div id="install-mobile-container">
 				<div class="install-subtitle">Mobile users can try these ♡ ⤵</div>
 				<div id="install-buttons-mobile">
 					<a href="https://play.google.com/store/apps/details?id=com.lemurbrowser.exts" class="install-notification-btn install-lemur-btn" target="_about">(Android) Lemur</a>
-					<a href="../install/" class="install-notification-btn install-ios-btn" target="_about">(iOS) 😔</a>
+					<a href="https://apps.apple.com/us/app/tampermonkey/id6738342400" class="install-notification-btn install-ios-btn" target="_about">(iOS) Tampermonkey</a>
 				</div>
 			</div>
 		</div>
@@ -316,9 +320,15 @@
 																<div class="dropdown-item" data-value="lozza-9">
 																Lozza 9 <span class="engine-type-tag list-tag">JS</span> <span class="engine-size-tag list-tag">(600KB)</span>
 																</div>
-																<div class="dropdown-item" data-value="lozza-5">
-																Lozza 5 <span class="engine-type-tag list-tag">JS</span> <span class="engine-size-tag list-tag">(400KB)</span> <span class="needs-fixing-engine-tag list-tag" data-translation-needs-fixing-tag="">Needs fixing</span>
-																</div>
+															<div class="dropdown-item" data-value="lozza-5">
+															Lozza 5 <span class="engine-type-tag list-tag">JS</span> <span class="engine-size-tag list-tag">(400KB)</span> <span class="needs-fixing-engine-tag list-tag" data-translation-needs-fixing-tag="">Needs fixing</span>
+															</div>
+															<div class="dropdown-item fun-engine-item" data-value="acas-random">A.C.A.S Random <span class="engine-type-tag list-tag">JS</span> <span class="fun-engine-tag list-tag">Fun</span></div>
+															<div class="dropdown-item fun-engine-item" data-value="acas-greedy">A.C.A.S Greedy <span class="engine-type-tag list-tag">JS</span> <span class="fun-engine-tag list-tag">Captures</span></div>
+															<div class="dropdown-item fun-engine-item" data-value="acas-pawn-storm">A.C.A.S Pawn Storm <span class="engine-type-tag list-tag">JS</span> <span class="fun-engine-tag list-tag">Pawns</span></div>
+															<div class="dropdown-item fun-engine-item" data-value="acas-knightmare">A.C.A.S Knightmare <span class="engine-type-tag list-tag">JS</span> <span class="fun-engine-tag list-tag">Knights</span></div>
+															<div class="dropdown-item fun-engine-item" data-value="acas-king-hunt">A.C.A.S King Hunt <span class="engine-type-tag list-tag">JS</span> <span class="fun-engine-tag list-tag">Checks</span></div>
+															<div class="dropdown-item fun-engine-item" data-value="acas-king-walk">A.C.A.S King Walk <span class="engine-type-tag list-tag">JS</span> <span class="fun-engine-tag list-tag">King</span></div>
 																<div class="dropdown-item force-hidden" data-value="acas-fusion">
 																Fusion α<span class="engine-type-tag list-tag">WASM</span> <span class="engine-size-tag list-tag">(>15MB)</span> <span class="realistic-engine-tag list-tag">Realistic</span>
 																</div>
@@ -343,7 +353,7 @@
 														<div class="dropdown-input-container">
 															<input disabled type="text" additional-type="dropdown" data-key="externalChessEngine" data-default-value="" placeholder="None"><div class="dropdown-icon"></div>
 															<div class="dropdown-list-container hidden" style="height: fit-content; max-height: 300px;"></div>
-															<p id="install-acas-server-text"><a href="/A.C.A.S/usage/#external" target="_blank"><span data-translation-external-engine-2>Install the A.C.A.S server</span></a> <span data-translation-external-engine-3>to use external engines</span></p>
+																<p id="install-acas-server-text"><a href="../usage/#external" target="_blank"><span data-translation-external-engine-2>Install the A.C.A.S server</span></a> <span data-translation-external-engine-3>to use external engines</span></p>
 														</div>
 													</div>
 													<p data-translation-experimental-warning>This feature is experimental, it might not work well!</p>
@@ -458,8 +468,63 @@
 									<input type="file" id="book-file" accept=".bin,.bin.gz" hidden>
 								</div>
 							</div>
-						</div>
-						<div class="setting-panel">
+							</div>
+
+							<div id="move-control-panel" class="setting-panel move-control-panel">
+								<div class="setting-panel-title">Move Lab 🧠🎛️</div>
+								<div class="control-panel-description">Controle como a engine escolhe entre os melhores candidatos legais.</div>
+
+								<div class="dropdown-input custom-input"><div><div class="input-title">Estilo de jogo</div><div class="input-subtitle">Personalidade estratégica aplicada ao MultiPV</div></div><div class="dropdown-input-container">
+									<input type="text" additional-type="dropdown" data-key="playStyle" data-default-value="engine" placeholder="Engine pura"><div class="dropdown-icon"></div>
+									<div class="dropdown-list-container">
+										<div class="dropdown-item" data-value="engine">Engine pura 🧮</div><div class="dropdown-item" data-value="balanced">Equilibrado ⚖️</div>
+										<div class="dropdown-item" data-value="aggressive">Agressivo 🔥</div><div class="dropdown-item" data-value="tactical">Tático ⚔️</div>
+										<div class="dropdown-item" data-value="positional">Posicional 🧱</div><div class="dropdown-item" data-value="defensive">Defensivo 🛡️</div>
+										<div class="dropdown-item" data-value="gambit">Gambito / iniciativa 🎁</div><div class="dropdown-item" data-value="materialist">Caçador de material 💰</div>
+										<div class="dropdown-item" data-value="initiative">Iniciativa ⚡</div><div class="dropdown-item" data-value="endgame">Final técnico ♟️</div>
+										<div class="dropdown-item" data-value="anti-trade">Evitar trocas 🕊️</div><div class="dropdown-item" data-value="human">Humano 🧑</div>
+										<div class="dropdown-item" data-value="chaos">Caos controlado 🎲</div>
+									</div>
+								</div></div>
+
+								<div class="move-control-sliders">
+									<div class="textfield-input custom-input"><div><div class="input-title">Agressividade (0–100)</div><div class="input-subtitle">Premia xeques, capturas e promoção</div></div><input type="textfield" inputmode="numeric" data-key="aggressionLevel" data-default-value="55" data-between="0-100"></div>
+									<div class="textfield-input custom-input"><div><div class="input-title">Risco (0–100)</div><div class="input-subtitle">Aumenta variedade controlada</div></div><input type="textfield" inputmode="numeric" data-key="riskLevel" data-default-value="20" data-between="0-100"></div>
+									<div class="textfield-input custom-input"><div><div class="input-title">Pool de candidatos (1–20)</div><div class="input-subtitle">Quantos lances MultiPV podem ser comparados</div></div><input type="textfield" inputmode="numeric" data-key="candidatePoolSize" data-default-value="2" data-between="1-20"></div>
+								</div>
+
+								<div class="dropdown-input custom-input"><div><div class="input-title">Restrição divertida</div><div class="input-subtitle">Limita o cálculo enquanto existir lance temático legal</div></div><div class="dropdown-input-container">
+									<input type="text" additional-type="dropdown" data-key="funMode" data-default-value="off" placeholder="Sem restrição"><div class="dropdown-icon"></div>
+									<div class="dropdown-list-container">
+										<div class="dropdown-item" data-value="off">Sem restrição</div><div class="dropdown-item" data-value="pawns-only">Somente peões 🐾</div>
+										<div class="dropdown-item" data-value="knights-only">Somente cavalos 🐴</div><div class="dropdown-item" data-value="bishops-only">Somente bispos</div>
+										<div class="dropdown-item" data-value="rooks-only">Somente torres 🏰</div><div class="dropdown-item" data-value="queen-only">Somente dama ♛</div>
+										<div class="dropdown-item" data-value="captures-only">Somente capturas 💥</div><div class="dropdown-item" data-value="checks-only">Somente xeques ⚡</div>
+										<div class="dropdown-item" data-value="quiet-only">Somente lances quietos 🤫</div><div class="dropdown-item" data-value="no-queen">Sem mover a dama 🚫♛</div>
+										<div class="dropdown-item" data-value="king-walk">Passeio do rei 🚶♔</div><div class="dropdown-item" data-value="pawn-storm">Tempestade de peões 🌊</div>
+										<div class="dropdown-item" data-value="roulette">Roleta 🎰</div>
+									</div>
+								</div></div>
+
+								<div class="control-subsection-title">Aberturas e defesas 📚</div>
+								<div class="dropdown-input custom-input"><div><div class="input-title">Comportamento do repertório</div><div class="input-subtitle">Preferir mantém alternativas; estrito calcula só a linha</div></div><div class="dropdown-input-container">
+									<input type="text" additional-type="dropdown" data-key="repertoireMode" data-default-value="off" placeholder="Desligado"><div class="dropdown-icon"></div>
+									<div class="dropdown-list-container"><div class="dropdown-item" data-value="off">Desligado</div><div class="dropdown-item" data-value="prefer">Preferir repertório</div><div class="dropdown-item" data-value="strict">Repertório estrito</div></div>
+								</div></div>
+
+								<div class="repertoire-grid">
+									<div class="dropdown-input custom-input"><div><div class="input-title">Abertura de brancas</div></div><div class="dropdown-input-container"><input type="text" additional-type="dropdown" data-key="whiteRepertoire" data-default-value="kings-indian-attack" placeholder="Ataque Índio do Rei"><div class="dropdown-icon"></div><div class="dropdown-list-container">
+										<div class="dropdown-item" data-value="off">Escolha da engine</div><div class="dropdown-item" data-value="kings-indian-attack">Ataque Índio do Rei ⭐</div><div class="dropdown-item" data-value="italian">Italiana</div><div class="dropdown-item" data-value="vienna">Vienense</div><div class="dropdown-item" data-value="london">Sistema Londres</div><div class="dropdown-item" data-value="queens-gambit">Gambito da Dama</div><div class="dropdown-item" data-value="english">Inglesa</div><div class="dropdown-item" data-value="ruy-lopez">Ruy Lopez</div><div class="dropdown-item" data-value="scotch">Escocesa</div><div class="dropdown-item" data-value="auto-white">Automático: clássicas ativas</div>
+									</div></div></div>
+									<div class="dropdown-input custom-input"><div><div class="input-title">Defesa de pretas</div></div><div class="dropdown-input-container"><input type="text" additional-type="dropdown" data-key="blackRepertoire" data-default-value="kings-indian-defense" placeholder="Defesa Índia do Rei"><div class="dropdown-icon"></div><div class="dropdown-list-container reversed-dropdown-list">
+										<div class="dropdown-item" data-value="off">Escolha da engine</div><div class="dropdown-item" data-value="kings-indian-defense">Defesa Índia do Rei ⭐</div><div class="dropdown-item" data-value="sicilian-dragon">Siciliana Dragão</div><div class="dropdown-item" data-value="sicilian-najdorf">Siciliana Najdorf</div><div class="dropdown-item" data-value="caro-kann">Caro-Kann</div><div class="dropdown-item" data-value="french">Francesa</div><div class="dropdown-item" data-value="scandinavian">Escandinava</div><div class="dropdown-item" data-value="pirc">Pirc</div><div class="dropdown-item" data-value="slav">Eslava</div><div class="dropdown-item" data-value="dutch">Holandesa</div><div class="dropdown-item" data-value="qgd">Gambito da Dama Recusado</div><div class="dropdown-item" data-value="auto-defense">Automático: defesas dinâmicas</div>
+									</div></div></div>
+								</div>
+								<div class="textfield-input custom-input"><div><div class="input-title">Horizonte do repertório (plies)</div><div class="input-subtitle">Duração máxima das linhas internas</div></div><input type="textfield" inputmode="numeric" data-key="repertoireMaxPly" data-default-value="16" data-between="2-30"></div>
+								<div class="control-warning">Use assistência somente contra bots, em análise ou onde ela for permitida.</div>
+							</div>
+
+							<div class="setting-panel">
 							<div class="setting-panel-title"><span class="visual-panel-title">Visual</span> 👁️‍🗨️</div>
 							<div class="floaty-input only-default-profile-setting custom-input">
 								<div><div class="input-title" data-translation-rendering-title>Rendering Settings</div><div class="input-subtitle" data-translation-rendering-subtitle>Display various metrics on the board</div></div>

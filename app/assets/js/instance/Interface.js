@@ -364,7 +364,6 @@ export default class Interface {
         this.AcasInstance.calculateBestMoves(fen, calculateMovesConfig);
 
         if(this.AcasInstance.debugLogsEnabled) {
-            const origin = (typeof location !== 'undefined' && location.origin) ? location.origin : '';
             const fens = [this.AcasInstance.currentFen, fen];
             const fensString = fens.map(x => x.split(' ')[0]).join(',');
     
@@ -372,7 +371,7 @@ export default class Interface {
                 '%c[ NEW FEN RECEIVED! ]', 'color: neon; font-weight: bold; font-size: 50px;'
             );
             console.warn(
-                '[Logical Change Detection] New board FEN received:', `${origin}/A.C.A.S/board/?fens=${fensString}&o=${this.AcasInstance.lastOrientation}`,
+                '[Logical Change Detection] New board FEN received:', `${new URL('../../../../board/', import.meta.url)}?fens=${fensString}&o=${this.AcasInstance.lastOrientation}`,
                 { fen, currentStateObj }
             );
         }

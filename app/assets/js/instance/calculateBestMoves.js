@@ -1,6 +1,7 @@
 import { setProfileBubbleStatus } from '../gui/profiles.js';
 import { updatePipData } from '../gui/pip.js';
 import { incrementUserUsageStat } from '../gui/stats.js';
+import { getControlledSearchMoves } from '../chess/MoveControl.js';
 
 // This function is called every time a seemingly valid new board position is detected on the chess site DOM.
 // The userscript tries to filter out as many weird position changes as possible, but sometimes it can miss some.
@@ -59,10 +60,27 @@ export default async function calculateBestMoves(currentFen, config = {}) {
 
         if(specificMovesObj?.isOpponent) reversedFen = REVERSE_FEN_TURN(currentFen);
 
-        this.sendMsgToEngine(`position fen ${reversedFen || currentFen}`, profileName);
+        const analysisFen = reversedFen || currentFen;
+        this.sendMsgToEngine(`position fen ${analysisFen}`, profileName);
 
-        if(specificMovesObj?.moves)
-            specificMoves = ' searchmoves ' + specificMovesObj.moves.join(' ');
+        const [funMode, repertoireMode, whiteRepertoire, blackRepertoire, repertoireMaxPly] = await Promise.all([
+            this.getConfigValue(this.configKeys.funMode, profileName),
+            this.getConfigValue(this.configKeys.repertoireMode, profileName),
+            this.getConfigValue(this.configKeys.whiteRepertoire, profileName),
+            this.getConfigValue(this.configKeys.blackRepertoire, profileName),
+            this.getConfigValue(this.configKeys.repertoireMaxPly, profileName)
+        ]);
+        const repertoireId = String(playerColor || '').toLowerCase() === 'b' ? blackRepertoire : whiteRepertoire;
+        const control = isPlayerTurn && !specificMovesObj
+            ? getControlledSearchMoves({ fen: analysisFen, funMode, repertoireId, repertoireMode, repertoireMaxPly })
+            : { moves: null, repertoireMoves: [], reason: null };
+
+        this.pV[profileName].repertoireMoves = control.repertoireMoves;
+        this.pV[profileName].moveControlReason = control.reason;
+
+        const requestedMoves = specificMovesObj?.moves || control.moves;
+        if(requestedMoves?.length)
+            specificMoves = ' searchmoves ' + [...new Set(requestedMoves)].join(' ');
 
         // Should not actually go infinite depth, read commenting below.
         // This is just a backup. It's not terrible to go infinite depth but problematic.
@@ -106,7 +124,8 @@ export default async function calculateBestMoves(currentFen, config = {}) {
         updatePipData({ 'startTime': Date.now(), movetime });
 
         const statusText = `Calculating best moves with UCI command: ${searchCommandStr}\n`
-            + `Max movetime: ${movetime || 'None'}`;
+            + `Max movetime: ${movetime || 'None'}`
+            + (control.reason ? `\nMove control: ${control.reason}` : '');
         setProfileBubbleStatus('calculating', profileName, statusText);
 
         if(typeof movetime === 'number' && movetime !== 0) {

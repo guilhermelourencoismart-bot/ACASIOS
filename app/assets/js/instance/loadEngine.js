@@ -1,10 +1,20 @@
 import { setProfileBubbleStatus } from '../gui/profiles.js';
+import { getEngineCompatibility, isIOS, isMobile } from '../platformCapabilities.js';
 
 export default async function loadEngine(profileName, engineName, attempt = 0) {
     const profileObj = await GET_PROFILE(profileName);
-    const profileChessEngine = engineName || profileObj.config.chessEngine;
+    const requestedEngine = engineName || profileObj.config.chessEngine;
+    const compatibility = getEngineCompatibility(requestedEngine);
+    const profileChessEngine = compatibility.supported ? requestedEngine : compatibility.fallback;
     const isReload = attempt > 0;
     let alreadyRestarted = false;
+
+    if(!compatibility.supported) {
+        const warning = `${requestedEngine} is unavailable on this device. ${compatibility.reason} Using ${profileChessEngine} instead.`;
+        console.warn('[A.C.A.S engine fallback]', warning);
+        setProfileBubbleStatus('warning', profileName, warning);
+        toast.warning(warning);
+    }
 
     if(isReload) {
         setProfileBubbleStatus('error', profileName, 'Engine crashed and engine is trying to reload...');
@@ -12,8 +22,8 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
         console.warn('RELOAD ATTEMPT', attempt, '-> Loading engine', engineName, profileName);
     }
 
-    if(engineName && attempt > 10) {
-        toast.warning(`Restarting the engine ${engineName} failed despite many attempts :(\n\nRefresh A.C.A.S!`);
+    if(attempt > 3) {
+        toast.warning(`Restarting the engine ${profileChessEngine} failed despite several attempts. Refresh A.C.A.S.`);
         
         setProfileBubbleStatus('error', profileName, 'Engine crashed, could not restart it.');
 
@@ -34,8 +44,16 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
     // successful handshake.
     this.pendingEngineLoads ??= new Set();
 
-    const trackLoad = (worker, intervalId) => {
-        const entry = { worker, intervalId };
+    const trackLoad = (worker, intervalId, engineLabel) => {
+        const entry = { worker, intervalId, timeoutId: null };
+
+        entry.timeoutId = setTimeout(() => {
+            restartEngine.bind(this)(
+                engineLabel,
+                new Error(`${engineLabel} did not initialize before the timeout`),
+                entry
+            );
+        }, isMobile ? 120000 : 60000);
 
         this.pendingEngineLoads.add(entry);
 
@@ -46,6 +64,7 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
         if(!entry) return;
 
         clearInterval(entry.intervalId);
+        clearTimeout(entry.timeoutId);
         this.pendingEngineLoads.delete(entry);
     };
 
@@ -53,6 +72,7 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
         if(!entry) return;
 
         clearInterval(entry.intervalId);
+        clearTimeout(entry.timeoutId);
         entry.worker?.terminate?.();
         this.pendingEngineLoads.delete(entry);
     };
@@ -66,6 +86,16 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
 
         setProfileBubbleStatus('warning', profileName, `Restarting the instance due to the error: ${e?.message}`);
         console.error(`Restarting the instance "${name}" due to the error:`, e);
+
+        if(isIOS && (name === 'maia2' || name === 'maia3')) {
+            this.engines = this.engines.filter(item => item.worker !== loadEntry?.worker);
+            const fallback = 'stockfish-17-lite-single';
+            const message = `${name} failed on iOS. Switching to ${fallback}.`;
+            setProfileBubbleStatus('warning', profileName, message);
+            toast.warning(message);
+            loadEngine.call(this, profileName, fallback, attempt + 1);
+            return;
+        }
 
         this.close(); // closing whole instance!
     }
@@ -109,7 +139,7 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
         let stockfish_loaded = false;
 
         stockfish.onmessage = async e => {
-            if(e.data === true) {
+            if(e.data === true && !stockfish_loaded) {
                 stockfish_loaded = true;
 
                 this.engines.push({
@@ -133,7 +163,7 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
             }
 
             stockfish.postMessage({ method: 'acas_check_loaded' });
-        }, 100));
+        }, 250), 'fairy-stockfish-nnue-wasm');
 
         stockfish.onerror = e => {
             restartEngine.bind(this)('fairy-stockfish-nnue-wasm', e, loadEntry);
@@ -145,7 +175,7 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
         let stockfish_loaded = false;
 
         stockfish.onmessage = async e => {
-            if(e.data === true) {
+            if(e.data === true && !stockfish_loaded) {
                 stockfish_loaded = true;
 
                 this.engines.push({
@@ -169,7 +199,7 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
             }
 
             stockfish.postMessage({ method: 'acas_check_loaded' });
-        }, 100));
+        }, 250), engineName);
 
         stockfish.onerror = e => {
             restartEngine.bind(this)(engineName, e, loadEntry);
@@ -181,8 +211,11 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
         let lc0_loaded = false;
 
         lc0.onmessage = async e => {
-            if(e.data === true && !lc0_loaded) {
+            if(e.data?.type === 'acas_error') {
+                restartEngine.bind(this)('lc0', new Error(e.data.message), loadEntry);
+            } else if(e.data === true && !lc0_loaded) {
                 lc0_loaded = true;
+                finishLoad(loadEntry);
 
                 this.engines.push({
                     'type': profileChessEngine,
@@ -207,7 +240,7 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
             }
 
             lc0.postMessage({ method: 'acas_check_loaded' });
-        }, 100));
+        }, 250), 'lc0');
 
         lc0.onerror = e => {
             restartEngine.bind(this)('lc0', e, loadEntry);
@@ -219,8 +252,11 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
         let fusion_loaded = false;
 
         Fusion.onmessage = async e => {
-            if(e.data === true) {
+            if(e.data?.type === 'acas_error') {
+                restartEngine.bind(this)('acas-fusion', new Error(e.data.message), loadEntry);
+            } else if(e.data === true && !fusion_loaded) {
                 fusion_loaded = true;
+                finishLoad(loadEntry);
 
                 this.engines.push({
                     'type': profileChessEngine,
@@ -243,7 +279,7 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
             }
 
             Fusion.postMessage({ method: 'acas_check_loaded' });
-        }, 100));
+        }, 250), 'acas-fusion');
 
         Fusion.onerror = e => {
             restartEngine.bind(this)('acas-fusion', e, loadEntry);
@@ -267,13 +303,47 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
         startGame.bind(this)();
     }
 
+    function loadFunEngine(mode) {
+        const fun = new Worker('../app/assets/engines/AcasFun/worker.js', { type: 'module' });
+        let funLoaded = false;
+
+        fun.onmessage = async event => {
+            if(event.data?.type === 'acas_error') {
+                restartEngine.bind(this)(profileChessEngine, new Error(event.data.message), loadEntry);
+            } else if(event.data === true && !funLoaded) {
+                funLoaded = true;
+                finishLoad(loadEntry);
+                this.engines.push({
+                    type: profileChessEngine,
+                    engine: (method, args) => fun.postMessage({ method, args: [...args] }),
+                    sendMsg: message => fun.postMessage({ method: 'uci', args: [message] }),
+                    worker: fun,
+                    profileName
+                });
+                fun.postMessage({ method: 'uci', args: [`setoption name Fun Style value ${mode}`] });
+                startGame.bind(this)();
+            } else if(event.data) {
+                processEngineMessage(event.data);
+            }
+        };
+
+        const loadEntry = trackLoad(fun, setInterval(() => {
+            if(funLoaded) { finishLoad(loadEntry); return; }
+            fun.postMessage({ method: 'acas_check_loaded', args: [] });
+        }, 250), profileChessEngine);
+        fun.onerror = event => restartEngine.bind(this)(profileChessEngine, event, loadEntry);
+    }
+
     function loadMaia3() {
         const maia = new Worker('../app/assets/engines/Maia3/acasWorker.js', { type: 'module' });
         let maia_loaded = false;
 
         maia.onmessage = async e => {
-            if(e.data === true) {
+            if(e.data?.type === 'acas_error') {
+                restartEngine.bind(this)('maia3', new Error(e.data.message), loadEntry);
+            } else if(e.data === true && !maia_loaded) {
                 maia_loaded = true;
+                finishLoad(loadEntry);
 
                 this.engines.push({
                     'type': profileChessEngine,
@@ -289,8 +359,16 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
             }
         };
 
+        const loadEntry = trackLoad(maia, setInterval(() => {
+            if(maia_loaded) {
+                finishLoad(loadEntry);
+                return;
+            }
+            maia.postMessage({ method: 'acas_check_loaded', args: [] });
+        }, 250), 'maia3');
+
         maia.onerror = e => {
-            restartEngine.bind(this)('maia3', e);
+            restartEngine.bind(this)('maia3', e, loadEntry);
         };
     }
 
@@ -299,8 +377,11 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
         let maia_loaded = false;
 
         maia.onmessage = async e => {
-            if(e.data === true) {
+            if(e.data?.type === 'acas_error') {
+                restartEngine.bind(this)('maia2', new Error(e.data.message), loadEntry);
+            } else if(e.data === true && !maia_loaded) {
                 maia_loaded = true;
+                finishLoad(loadEntry);
 
                 this.engines.push({
                     'type': profileChessEngine,
@@ -323,7 +404,7 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
             }
 
             maia.postMessage({ method: 'acas_check_loaded' });
-        }, 100));
+        }, 250), 'maia2');
 
         maia.onerror = e => {
             restartEngine.bind(this)('maia2', e, loadEntry);
@@ -373,6 +454,13 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
         case 'lozza-9':
             loadLozza.bind(this)(9);
             break;
+
+        case 'acas-random': loadFunEngine.bind(this)('random'); break;
+        case 'acas-greedy': loadFunEngine.bind(this)('greedy'); break;
+        case 'acas-pawn-storm': loadFunEngine.bind(this)('pawn-storm'); break;
+        case 'acas-knightmare': loadFunEngine.bind(this)('knightmare'); break;
+        case 'acas-king-hunt': loadFunEngine.bind(this)('king-hunt'); break;
+        case 'acas-king-walk': loadFunEngine.bind(this)('king-walk'); break;
 
         case 'lc0':
             loadLc0.bind(this)();

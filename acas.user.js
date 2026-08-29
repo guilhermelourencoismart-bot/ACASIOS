@@ -80,7 +80,7 @@
 // @require     https://update.greasyfork.org/scripts/470417/UniversalBoardDrawerjs.js?acasv=2
 // @require     https://update.greasyfork.org/scripts/591079/1900946/AutomaticMove.js
 // @icon        https://raw.githubusercontent.com/Psyyke/A.C.A.S/main/assets/images/logo-192.png
-// @version     2.4.7
+// @version     2.4.7.2
 // @namespace   HKR
 // @author      HKR
 // @license     GPL-3.0

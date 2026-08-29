@@ -3,13 +3,25 @@ import MaiaEngine from './maiaEngine.js';
 let engine = null;
 
 (async () => {
-    engine = new MaiaEngine({ onMessage: msg => postMessage(msg) });
+    try {
+        engine = new MaiaEngine({
+            onMessage: msg => postMessage(msg),
+            onError: error => postMessage({ type: 'acas_error', message: error?.message || String(error) })
+        });
 
-    postMessage(true);
+        postMessage(true);
+    } catch(error) {
+        postMessage({ type: 'acas_error', message: error?.message || String(error) });
+    }
 })();
 
 onmessage = e => {
     const { method, args } = e.data;
+
+    if(method === 'acas_check_loaded') {
+        postMessage(Boolean(engine));
+        return;
+    }
 
     if(!engine) {
         postMessage(false);

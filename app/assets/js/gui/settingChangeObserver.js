@@ -74,6 +74,7 @@ export function runSettingChangeObserver(inputElem, delayMs = 0, wasCalledByUpda
             const oppMoveGuessInputContainer = document.querySelector('input[data-key="showOpponentMoveGuess"]')
                 ?.parentElement?.parentElement?.parentElement;
             const isMaiaEngine = value && value.includes('maia');
+            const isFunEngine = value && value.startsWith('acas-') && value !== 'acas-fusion';
             const enginesWithoutAdvancedElo = ['maia2', 'maia3', 'fairy-stockfish-nnue-wasm'];
             const isExternal = IS_EXTERNAL_ENGINE_SETTING_ACTIVE[SETTING_FILTER_OBJ.profileID];
 
@@ -111,11 +112,13 @@ export function runSettingChangeObserver(inputElem, delayMs = 0, wasCalledByUpda
                 lc0WeightDropdown.classList.add('hidden');
             }
 
-            if(enginesWithoutAdvancedElo.includes(value)) {
+            if(enginesWithoutAdvancedElo.includes(value) || isFunEngine) {
                 setAdvancedEloCheckboxChecked(false);
-                normalEloInput.removeAttribute('disabled');
+                if(isFunEngine) normalEloInput.setAttribute('disabled', 'true');
+                else normalEloInput.removeAttribute('disabled');
             } else if(value !== 'lc0') {
                 advancedEloEnableInput.removeAttribute('disabled');
+                normalEloInput.removeAttribute('disabled');
             }
 
             break;

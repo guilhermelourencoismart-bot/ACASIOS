@@ -42,6 +42,7 @@ export default async function updateSettings(updateObj) {
     const didUpdateLc0Weight = findSetting(this.configKeys.lc0Weight);
     const didUpdateChessFont = findSetting(this.configKeys.chessFont);
     const didUpdateMultiPV = findSetting(this.configKeys.moveSuggestionAmount);
+    const didUpdateCandidatePool = findSetting(this.configKeys.candidatePoolSize);
     const didUpdate960Mode = findSetting(this.configKeys.useChess960);
     const didUpdateChessEngine = findSetting(this.configKeys.chessEngine);
     const didUpdateEngineEnabled = findSetting(this.configKeys.engineEnabled);
@@ -118,8 +119,13 @@ export default async function updateSettings(updateObj) {
     if(didUpdateLc0Weight)
         this.setEngineWeight(await this.getConfigValue(this.configKeys.lc0Weight, profileName), profileName);
 
-    if(didUpdateMultiPV)
-        this.setEngineMultiPV(await this.getConfigValue(this.configKeys.moveSuggestionAmount, profileName), profileName);
+    if(didUpdateMultiPV || didUpdateCandidatePool) {
+        const visibleMoves = Number(await this.getConfigValue(this.configKeys.moveSuggestionAmount, profileName)) || 0;
+        const candidatePool = Number(await this.getConfigValue(this.configKeys.candidatePoolSize, profileName)) || visibleMoves;
+        const engineMultiPV = Math.max(1, Math.min(20, Math.max(visibleMoves, candidatePool)));
+        if(this.pV[profileName]) this.pV[profileName].visibleMoveCount = visibleMoves;
+        this.setEngineMultiPV(engineMultiPV, profileName);
+    }
 
     if(didUpdate960Mode)
         this.set960Mode(useChess960, profileName);
