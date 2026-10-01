@@ -1,6 +1,39 @@
 .chessinsper-panel {
   border-left: 3px solid #e53935;
 }
+.chessinsper-brand::before {
+  content: "Chessinsper · ";
+}
+.chessinsper-activate {
+  position: fixed;
+  right: calc(16px + env(safe-area-inset-right, 0px));
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  z-index: 25;
+  min-height: 48px;
+  max-width: calc(100vw - 32px);
+  padding: 12px 18px;
+  border: 1px solid #e53935;
+  border-radius: 24px;
+  background: #28282c;
+  color: #fff;
+  font: inherit;
+  font-size: 0.9rem;
+  box-shadow: 0 4px 16px #0006;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.chessinsper-activate[aria-pressed="true"] {
+  background: #b72c2c;
+}
+.chessinsper-activate:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
+}
+.chessinsper-panel {
+  scroll-margin-block: 16px;
+  scroll-margin-block-start: 96px;
+  padding-bottom: 76px;
+}
 .chessinsper-description {
   font-size: 0.85rem;
   line-height: 1.5;

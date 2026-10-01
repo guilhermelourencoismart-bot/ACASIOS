@@ -52,8 +52,22 @@ const passed = [];
           "utf8",
         ) +
         "\n" +
-        userscript,
+        "\nif (location.pathname.includes('/app/dev')) {\n" +
+        ["CommLink.js", "UniversalBoardDrawer.js", "AutomaticMove.js"]
+          .map((name) =>
+            fs.readFileSync(
+              path.join(repo, "userscript-components", name),
+              "utf8",
+            ),
+          )
+          .join("\n") +
+        "\n" +
+        userscript +
+        "\n} else {\n" +
+        userscript +
+        "\n}",
     });
+    context.setDefaultTimeout(20000);
     const page = await context.newPage(),
       errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
@@ -67,10 +81,35 @@ const passed = [];
       page.locator("#tos-continue-button").click(),
     ]);
     await page.waitForSelector("#chessinsper-panel");
-    await page.waitForFunction(() =>
-      Object.values(GM_getValue("AcasConfig")?.global?.profiles || {}).some(
-        (p) => p.chessinsper && p.chessEngine,
-      ),
+    await page
+      .waitForFunction(() =>
+        Object.values(GM_getValue("AcasConfig")?.global?.profiles || {}).some(
+          (p) => p.chessinsper && p.chessEngine,
+        ),
+      )
+      .catch(async (error) => {
+        console.error(
+          await page.evaluate(() => ({
+            config: GM_getValue("AcasConfig"),
+            filter: SETTING_FILTER_OBJ,
+            body: document.body.innerText.slice(0, 1200),
+          })),
+        );
+        throw error;
+      });
+    assert.equal(
+      await page.locator("#chessinsper-activate").getAttribute("aria-pressed"),
+      "false",
+    );
+    await page.locator("#chessinsper-activate").click();
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector("#chessinsper-activate")
+          .getAttribute("aria-pressed") === "true",
+    );
+    passed.push(
+      "Floating button activates Chessinsper for the selected profile",
     );
     const set = async (label, value) => {
       const field = page.getByLabel(label, { exact: true });
@@ -122,6 +161,10 @@ const passed = [];
       );
       await loopThroughAndUpdateSettingsValues(false);
     });
+    assert.equal(
+      await page.locator("#chessinsper-activate").getAttribute("aria-pressed"),
+      "false",
+    );
     await set("Força do perfil (ELO)", 1250);
     await page.evaluate(async (profile) => {
       SETTING_FILTER_OBJ.profileID = profile;
@@ -165,6 +208,12 @@ const passed = [];
       });
     assert.ok(mobile.width <= mobile.viewport);
     assert.equal(mobile.columns, 1);
+    const floating = await page.locator("#chessinsper-activate").boundingBox();
+    assert.ok(
+      floating.x >= 0 &&
+        floating.x + floating.width <= 390 &&
+        floating.y + floating.height <= 844,
+    );
     if (process.env.ACAS_TEST_SCREENSHOT_DIR) {
       fs.mkdirSync(process.env.ACAS_TEST_SCREENSHOT_DIR, { recursive: true });
       await page.locator("#chessinsper-panel").hover();
@@ -189,7 +238,7 @@ const passed = [];
     await page.evaluate(async () => {
       const key = GET_PROFILE_STORAGE_KEY(SETTING_FILTER_OBJ.profileID),
         config = GM_getValue("AcasConfig");
-      config.global.profiles[key].chessEngine = "stockfish-17-lite-single";
+      config.global.profiles[key].chessEngine = "stockfish-19-lite-single";
       config.global.profiles[key].enableMoveRatings = false;
       config.global.profiles[key].enableAdvancedElo = true;
       GM_setValue("AcasConfig", config);
@@ -224,11 +273,6 @@ const passed = [];
       }, 500);
     });
     await page.waitForFunction(() => window.__instance?.instanceReady);
-    await page.evaluate(() =>
-      __instance.calculateBestMoves(__instance.currentFen, {
-        skipValidityChecks: true,
-      }),
-    );
     try {
       await page.waitForFunction(() => window.__packets?.length > 0, null, {
         timeout: 15000,
@@ -276,7 +320,7 @@ const passed = [];
         packets: __packets,
         marks: pv.activeGuiMoveMarkings.map((m) => ({
           move: m.player,
-          style: m.playerArrowElem?.getAttribute("style"),
+          style: m.otherElems?.[0]?.getAttribute("style"),
           visual: m.chessinsperVisual,
         })),
         workers: __testWorkers,
@@ -291,7 +335,7 @@ const passed = [];
     assert.match(result.marks[0].style, /#123abc|18,\s*58,\s*188/);
     assert.match(result.packets[0].move, /^[a-h][1-8][a-h][1-8][qrbn]?$/);
     assert.ok(
-      result.workers.some((p) => p.includes("stockfish-17-lite-single")),
+      result.workers.some((p) => p.includes("stockfish-19-lite-single")),
     );
     assert.ok(result.workers.every((p) => p.includes("/assets/engines/")));
     passed.push(
@@ -299,17 +343,20 @@ const passed = [];
     );
     const metrics = await page.evaluate(async () => {
       const profile = Object.keys(__instance.pV)[0];
-      await __instance.renderMetric(
-        "4k3/8/8/8/8/4r3/4B3/4K3 w - - 0 1",
-        profile,
-      );
+      const originalFen = __instance.currentFen;
+      __instance.currentFen = "4k3/8/8/8/8/4r3/4B3/4K3 w - - 0 1";
+      await __instance.renderMetric(__instance.currentFen, profile);
+      __instance.currentFen = originalFen;
       return __instance.pV[profile].activeMetrics.map((m) => ({
         type: m.data.shapeType,
+        category: m.data.category,
+        profile: m.data.profileID,
         x: m.elem.getAttribute("x"),
         y: m.elem.getAttribute("y"),
       }));
     });
     assert.ok(metrics.some((m) => m.type === "text"));
+    assert.ok(metrics.every((m) => m.category === "metric" && m.profile));
     assert.ok(
       metrics.every(
         (m) => Number.isFinite(Number(m.x)) && Number.isFinite(Number(m.y)),
@@ -350,7 +397,7 @@ const passed = [];
         Object.keys(__instance.pV)[0],
       );
     });
-    await set("Usar funções Chessinsper neste perfil", false);
+    await page.locator("#chessinsper-activate").click();
     await page.waitForFunction(() => {
       const profile = Object.keys(__instance.pV)[0],
         pv = __instance.pV[profile];
@@ -376,6 +423,35 @@ const passed = [];
     assert.equal(restored.depth, restored.nativeDepth);
     passed.push("Disabling Chessinsper reloads the native engine settings");
     await page.evaluate(() => __instance.close());
+    // Two local tabs exercise the real compiled userscript and CommLink shape transport.
+    await page.evaluate(() => {
+      const config = GM_getValue("AcasConfig"),
+        key = GET_PROFILE_STORAGE_KEY(SETTING_FILTER_OBJ.profileID);
+      const settings = ChessinsperCore.normalizeSettings(
+        config.global.profiles[key].chessinsper,
+      );
+      settings.enabled = true;
+      settings.visualIntelligence.maxArrows = 2;
+      config.global.profiles[key].chessinsper = JSON.stringify(settings);
+      config.global.profiles[key].autoMove = false;
+      GM_setValue("AcasConfig", config);
+    });
+    const frontend = await context.newPage();
+    frontend.on("pageerror", (e) => errors.push(e.message));
+    await frontend.goto(base + "app/dev/", { waitUntil: "load" });
+    await frontend.getByRole("button", { name: /Free Move/ }).click();
+    await frontend.waitForFunction(
+      () =>
+        [...document.querySelectorAll("svg polygon")].some((el) =>
+          el.getAttribute("style")?.includes("#abcdef"),
+        ),
+      null,
+      { timeout: 20000 },
+    );
+    passed.push(
+      "Compiled userscript receives native A.C.A.S arrow shapes across two local tabs",
+    );
+    await frontend.close();
     // Exercise move input against a local board fixture; never contact an online game.
     const automation = await page.evaluate(async () => {
       const board = document.createElement("div");

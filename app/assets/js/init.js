@@ -3,8 +3,10 @@ import { installNotificationElem, hiddenSettingPanel, tosCheckboxElem,
     tosContinueBtnElem, tosContainerElem } from './gui/elementDeclarations.js';
 import { highlightSettingElem, initGUI } from './gui.js';
 import { initializeMobileRuntime } from './mobileRuntime.js';
+import { initializeActivityLogging } from './misc/activityLog.js';
 
 initializeMobileRuntime();
+initializeActivityLogging();
 
 let started = false;
 
@@ -113,7 +115,7 @@ function processUrlParams() {
                 break;
         }
     } else if(settingToHighlight) {
-        const foundSettingElem = [...document.querySelectorAll('input[data-key]')]
+        const foundSettingElem = [...document.querySelectorAll('input[data-key], textarea[data-key]')]
             .find(elem => elem.dataset.key === settingToHighlight);
 
         const settingContainer = foundSettingElem?.closest('.custom-input');

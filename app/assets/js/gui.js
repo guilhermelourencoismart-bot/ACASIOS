@@ -1,6 +1,6 @@
 import { acasInstanceContainer, settingsNavbarGlobalElem, importSettingsBtn, exportSettingsBtn, resetSettingsBtn,
     noInstancesSitesElem, seeSupportedSitesBtn, ttsNameDropdownElem, userscriptInfoElem, updateYourUserscriptElem,
-    decreaseInstanceSizeBtn, increaseInstanceSizeBtn, addNewProfileBtn, floatyButtons, beggingFloaty, profileListContainerElem } from './gui/elementDeclarations.js';
+    decreaseInstanceSizeBtn, increaseInstanceSizeBtn, addNewProfileBtn, beggingFloaty, profileListContainerElem } from './gui/elementDeclarations.js';
 import { importSettings, exportSettings, resetSettings } from './gui/settings.js';
 import { initializeDropdowns, addDropdownItem } from './gui/domDropdown.js';
 import { monitorInstances, monitorInstanceTabs, toggleSelectedNavbarItem } from './gui/instances.js';
@@ -9,9 +9,49 @@ import { incrementUserUsageStat, updateUserUsageStats } from './gui/stats.js';
 import { fillProfileTabs, createNewProfile } from './gui/profiles.js';
 import { pipData, startPictureInPicture } from './gui/pip.js';
 import { initializeChessinsperPanel } from './chessinsper/panel.js';
+import { initializeDynamicSettings } from './gui/dynamicSettings.js';
+import { initializeActivityLog } from './gui/activityLog.js';
 
 export const guiBroadcastChannel = new BroadcastChannel(GUI_BROADCAST_NAME);
 let initialized = false;
+
+function setupSettingsContainerHoverRecovery() {
+    const settingsContainer = document.querySelector('#acas-settings-container');
+    if(!settingsContainer) return;
+
+    const setActive = (active) => settingsContainer.classList.toggle('is-active', active);
+
+    settingsContainer.addEventListener('pointerenter', () => setActive(true));
+    settingsContainer.addEventListener('pointerleave', () => setActive(false));
+    settingsContainer.addEventListener('pointerdown', () => setActive(true));
+
+    document.addEventListener('pointerdown', event => {
+        if(!settingsContainer.contains(event.target)) setActive(false);
+    });
+}
+
+function initializeWebhookTemplateEditor() {
+    const textarea = document.querySelector('.webhook-message-template');
+    const highlight = document.querySelector('.webhook-template-highlight');
+    if(!textarea || !highlight) return;
+
+    const escapeHtml = value => value.replace(/[&<>"']/g, character => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[character]));
+
+    const updateHighlight = () => {
+        const escaped = escapeHtml(textarea.value);
+        highlight.innerHTML = escaped.replace(/\{[a-zA-Z][a-zA-Z0-9_]*\}/g,
+            variable => `<span class="webhook-variable">${variable}</span>`
+        ) + '\n';
+        highlight.style.transform = `translate(${-textarea.scrollLeft}px, ${-textarea.scrollTop}px)`;
+    };
+
+    textarea.addEventListener('input', updateHighlight);
+    textarea.addEventListener('scroll', updateHighlight);
+    textarea.addEventListener('acas-value-set', updateHighlight);
+    updateHighlight();
+}
 
 export function setThemeColorHex(value) {
     document.body.style['background-color'] = value || null;
@@ -103,41 +143,36 @@ function fillTextToSpeechVoices() {
 }
 
 function initializeFloatyButtons() {
-    [...floatyButtons].forEach(btn => {
-        const floatyDialog = btn?.parentElement?.querySelector('dialog');
+    document.querySelectorAll('.floaty-wrapper > dialog').forEach(floatyDialog => {
+        const btn = floatyDialog.parentElement.querySelector('.open-floaty-btn');
+        const closeBtn = floatyDialog.querySelector('.floaty-close-btn');
 
-        if(floatyDialog) {
-            const closeBtn = floatyDialog.querySelector('.floaty-close-btn');
-        
-            function open() {
-                floatyDialog.showModal();
-                document.body.style.overflow = 'hidden'; // stop background scrolling
-            }
-        
-            function close() {
-                floatyDialog.close();
-                document.body.style.overflow = ''; // restore scrolling
-            }
-        
-            btn.onclick = () => (floatyDialog.open ? close() : open());
-            if(closeBtn) closeBtn.onclick = () => close();
-        
-            floatyDialog.onclick = (e) => {
-                const selection = window.getSelection().toString();
-                
-                if(!selection) {
-                    if (e.target === floatyDialog) close();
-                }
-            };
-
-            const observer = new MutationObserver(() => {
-                if(!floatyDialog.open) document.body.style.overflow = '';
-            });
-        
-            observer.observe(floatyDialog, { attributes: true, attributeFilter: ['open'] });
-        } else {
-            console.error('No floaty dialog found for floaty button!');
+        function open() {
+            floatyDialog.showModal();
+            document.body.style.overflow = 'hidden'; // stop background scrolling
         }
+
+        function close() {
+            floatyDialog.close();
+            document.body.style.overflow = document.querySelector('dialog[open]') ? 'hidden' : '';
+        }
+
+        // The graph editor now opens through setting shortcuts, without a launcher.
+        if(btn) btn.onclick = () => (floatyDialog.open ? close() : open());
+        if(closeBtn) closeBtn.onclick = () => close();
+
+        floatyDialog.onclick = (e) => {
+            const selection = window.getSelection().toString();
+            if(!selection && e.target === floatyDialog) close();
+        };
+
+        const observer = new MutationObserver(() => {
+            if(!floatyDialog.open) {
+                // A setting shortcut can stack the graph above another modal.
+                document.body.style.overflow = document.querySelector('dialog[open]') ? 'hidden' : '';
+            }
+        });
+        observer.observe(floatyDialog, { attributes: true, attributeFilter: ['open'] });
     });
 }
 
@@ -155,7 +190,7 @@ async function updateUserscriptInfoText() {
     
         document.title = `A.C.A.S (Using ${userscriptData})`;
     
-        if(GM_info?.script?.version && IS_BELOW_VERSION(GM_info?.script?.version, '2.4.7')) {
+        if(GM_info?.script?.version && IS_BELOW_VERSION(GM_info?.script?.version, USERSCRIPT_MIN_VERSION)) {
             updateYourUserscriptElem.classList.remove('hidden');
             toast.warning(TRANS_OBJ?.oldUserscriptWarning ?? 'You are using an outdated or incompatible version of A.C.A.S. Please update the userscript.', 10000);
         }
@@ -200,6 +235,8 @@ function initializePolyglotBookLoader() {
                 SETTING_FILTER_OBJ.profileID,
                 loadedBook
             );
+            await Promise.all((window.AcasInstances ?? []).filter(item => SETTING_FILTER_OBJ.instanceID == null
+                || String(item.id) === String(SETTING_FILTER_OBJ.instanceID)).map(item => item.instance.loadOpeningBook()));
 
             const openingBookAddedText = (TRANS_OBJ?.openingBookAdded ?? 'Added opening book: {fileName}')
                 .replace('{fileName}', fileName);
@@ -214,6 +251,8 @@ function initializePolyglotBookLoader() {
 
 export async function initGUI() {
     if(initialized) return;
+
+    setupSettingsContainerHoverRecovery();
 
     const storedThemeColor = localStorage.getItem(THEME_COLOR_STORAGE_KEY);
     const defaultInstanceSize = 500;
@@ -258,7 +297,10 @@ export async function initGUI() {
 
     initializeChessinsperPanel();
     initializeFloatyButtons();
+    initializeActivityLog();
+    initializeDynamicSettings();
     initializeInputElems();
+    initializeWebhookTemplateEditor();
     initializePolyglotBookLoader();
     initializeDropdowns();
 

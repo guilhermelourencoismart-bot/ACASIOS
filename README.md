@@ -2,7 +2,7 @@
 
 # A.C.A.S (Advanced Chess Assistance System)
 
-Este fork inclui **A.C.A.S × Chessinsper**: engines e desenho nativos do A.C.A.S com os perfis, controles visuais e automação adaptados do Chessinsper. Instale o [userscript deste repositório](acas.user.js) e use sua interface correspondente. Consulte [CHESSINSPER.md](CHESSINSPER.md) para instalação, funções integradas e testes.
+Este fork inclui **A.C.A.S × Chessinsper**: engines e desenho nativos do A.C.A.S com os perfis, controles visuais e automação adaptados do Chessinsper. Instale o [userscript deste repositório](acas.user.js) e use sua interface correspondente. Base atualizada para **A.C.A.S 2.5.0**, com ativação pelo botão flutuante **Ativar Chessinsper**. Consulte [CHESSINSPER.md](CHESSINSPER.md) e o [relatório de uso](RELATORIO-USUARIO.md).
 
 > [!WARNING]
 > A.C.A.S is currently in development. Expect bugs, especially on variants.
@@ -14,7 +14,7 @@ A.C.A.S (Advanced Chess Assistance System) is an open-source chess assistant (**
 > [!CAUTION]
 > The use of A.C.A.S may violate the rules and lead to disqualification or banning from tournaments and online platforms. A.C.A.S is meant to be used as a real-time learning tool. Remember, struggling at chess doesn't mean you're unintelligent... it's not an IQ test, just a board game. And even IQ tests only measure certain aspects of your abilities. Use A.C.A.S fairly, be kind to other players.
 
-| [▶️ Open A.C.A.S](https://psyyke.github.io/A.C.A.S/) | [⬇️ Install (GreasyFork)](https://greasyfork.org/en/scripts/459137-a-c-a-s-advanced-chess-assistance-system)  | [💬 Discuss With Community](https://hakorr.github.io/Userscripts/community/invite)
+| [▶️ Abrir ACASIOS](https://guilhermelourencoismart-bot.github.io/ACASIOS/app/) | [⬇️ Instalar script](acas.user.js)  | [💬 Discuss With Community](https://hakorr.github.io/Userscripts/community/invite)
 |-------|-------|-------|
 
 * Many built in WebAssembly engines (faster than JS)

@@ -3,6 +3,7 @@ import { runSettingChangeObserver } from './settingChangeObserver.js';
 import { settingsNavbarGlobalElem } from './elementDeclarations.js';
 import { toggleSelectedNavbarItem } from './instances.js';
 import { guiBroadcastChannel } from '../gui.js';
+import { logActivity, formatLogValue } from '../misc/activityLog.js';
 
 let dynamicOptionThrottleSettingUpdate = null;
 
@@ -119,6 +120,8 @@ export async function saveSetting(settingElem, isDirectlyCausedByUser = false, t
 
     const noProfile = settingElem.dataset.noProfile;
 
+    if(!noProfile && !filter.profileID) return;
+
     const profileKey = GET_PROFILE_STORAGE_KEY(filter.profileID);
 
     if(filter.instanceID) {
@@ -160,15 +163,27 @@ export async function saveSetting(settingElem, isDirectlyCausedByUser = false, t
         }
     }
 
-    USERSCRIPT.setValue(gmConfigKey, config);
+    await USERSCRIPT.setValue(gmConfigKey, config);
+
+    if(isDirectlyCausedByUser) logActivity('setting-change', `Saved ${settingObj.key}: ${formatLogValue(settingObj.value)}`, {
+        instanceID: filter.instanceID,
+        profile: noProfile ? null : GET_HUMAN_READABLE_PROFILE_NAME(filter.profileID)
+    });
 
     const profile = await GET_PROFILE(filter.profileID);
+    if(profile?.config?.dynamicSettings) {
+        // Keep the saved/default value in the setting broadcast. Dynamic values
+        // are resolved when read for engine/runtime use, not written back here.
+        profile.config[settingObj.key] = settingObj.value;
+    }
 
     guiBroadcastChannel.postMessage({
         'type': 'settingSave',
         'data' : {
             'key': settingObj.key,
             'value': settingObj.value,
+            instanceID: filter.instanceID,
+            noProfile: Boolean(noProfile),
             isDirectlyCausedByUser,
             profile,
         }
@@ -211,13 +226,15 @@ export async function removeSetting(settingElem) {
 }
 
 export async function loopThroughAndUpdateSettingsValues(isDirectlyCausedByUser) {
-    const inputElements = [...document.querySelectorAll('input[data-key]')];
+    const inputElements = [...document.querySelectorAll('input[data-key], textarea[data-key]')];
 
     for(const inputElem of inputElements) {
         const key = inputElem.dataset.key;
         const noProfile = inputElem.dataset.noProfile;
 
-        const value = await GET_GM_CFG_VALUE(key, SETTING_FILTER_OBJ.instanceID, noProfile ? false : SETTING_FILTER_OBJ.profileID);
+        const value = noProfile
+            ? await GET_GM_CFG_BASE_VALUE(key, SETTING_FILTER_OBJ.instanceID, false)
+            : await GET_GM_CFG_BASE_VALUE(key, SETTING_FILTER_OBJ.instanceID, SETTING_FILTER_OBJ.profileID);
 
         if(typeof value === 'boolean' || value || value === 0) {
             setInputValue(inputElem, value);
@@ -229,6 +246,8 @@ export async function loopThroughAndUpdateSettingsValues(isDirectlyCausedByUser)
         }
     }
     document.dispatchEvent(new Event('acas:settings-loaded'));
+
+    document.dispatchEvent(new Event('acas-settings-updated'));
 }
 
 export function scheduleSettingsUpdate(waitTime = 50) {

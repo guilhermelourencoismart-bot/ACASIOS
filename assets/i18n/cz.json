@@ -91,10 +91,17 @@
         "*[data-translation-ffs-title]": "Nastavení plovoucího panelu",
         "*[data-translation-ffs-subtitle]": "Tyto možnosti jsou především pro uživatele Firefoxu",
         "*[data-translation-ffs-instructions]": "(Poznámka pro uživatele Firefoxu: Povolte 'Floating Panel' kliknutím pravým tlačítkem na video níže a výběrem 'Sledovat v obraze v obraze'. Uživatelé na mobilu mohou vyzkoušet podržení videa na vteřinu. To umožní rychlejší výpočty a stabilnější připojení. Pokud nechcete tento panel vidět při každém otevření A.C.A.S, deaktivujte 'Floating Panel' nebo začněte používat Chrome.)",
+        "*[data-translation-webhook-title]": "Zprávy",
+        "*[data-translation-webhook-subtitle]": "Nakonfigurovat zprávy webhooku Discord",
+        "*[data-translation-webhook-available-variables]": "Dostupné proměnné",
         "*[data-translation-ffs-videostream]": "Videostream",
         "#des-no-result-text": "Některá nastavení jsou dynamicky analyzována z výstupu UCI motoru. Otevřete šachovnici, abyste spustili svůj motor a načetli dynamická nastavení."
     },
     "configTranslations": {
+        "pipSan": ["Notace SAN", "Používat SAN v plovoucím panelu a řeči"],
+        "ttsAnnounceEnemyMoves": ["Oznamovat tahy soupeře", "Poslechněte si poslední tah soupeře"],
+        "ttsAnnounceEvaluation": ["Oznamovat změny výhody", "Poslechněte si, kdy získáváte nebo ztrácíte výhodu"],
+        "ttsTranslateAudio": ["Přeložit zvuk", "Poslouchat tahy ve vybraném jazyce"],
         "engineEnabled": ["Povoleno", "Je motor povolen"],
         "chessEngine": ["Šachový motor", "Přečtěte si více zde"],
         "chessVariant": ["Šachová varianta", "Přečtěte si více zde"],
@@ -146,10 +153,16 @@
         "renderSquareSafe": ["Bezpečná pole", "Zvýrazní pole, na která se figurka může bezpečně přesunout azurově"],
         "renderPiecePlayerCapture": ["Hrozba zajetí vlastních figur", "Zobrazí 💧 na figurkách, které jsou v ohrožení zajetí"],
         "renderPieceEnemyCapture": ["Hrozba zajetí figur protivníka", "Zobrazí 🩸 na figurkách, které byste měli napadnout"],
+        "enableEveryPieceEvals": ["Zobrazit přínos každé figurky", "Podívejte se, jak každá figurka přispívá k pozici"],
         "feedbackEngineDepth": ["Hloubka vyhledávání", "Jak hluboko bude motor pro zpětnou vazbu vyhledávat"],
         "enableEnemyFeedback": ["Hodnotit protivníka", "Poskytnout zpětnou vazbu i na protivníka"],
         "enableMoveRatings": ["Hodnocení tahů", "Zobrazit myšlenky motoru o tazích"],
         "feedbackOnExternalSite": ["Zpětná vazba na externí stránce", "Zobrazit zpětnou vazbu na tazích na šachové desce stránky (např. na desce chess.com)"],
+        "webhookEnabled": ["Povoleno", "Povolit tomuto profilu odesílat webhook zprávy"],
+        "webhookUrl": ["Discord Webhook URL", "Uchovávejte tuto adresu v soukromí"],
+        "webhookMessageTemplate": ["Šablona zprávy", "Použijte {variables} pro vložení šachových dat"],
+        "webhookIncludeBoard": ["Zahrnout fotografii desky", "Přiložit obrázek aktuální šachové desky"],
+        "webhookIncludeRawUci": ["Hrubé UCI motoru", "Odesílat surové řádky UCI motoru"],
         "pip": ["Plovoucí panel", "Důležité! Zabrání zamrznutí A.C.A.S!"],
         "pipBoard": ["Zobrazit šachovnici", "Místo pouhého textu zobrazit celou šachovnici"],
         "movesOnDemand": ["Tahy na vybořání", "Vypočívá tahy pro figury, se kterými pracujete"],
@@ -162,6 +175,29 @@
         "concealAssistanceAutoDelayMs": ["Automatické skrytí (ms)", "Automaticky skrýt funkce pomoci po této době"]
     },
     "translations": {
+        "moveFeedback": {
+            "labels": ["Neutrální", "Nepřesnost", "Chyba", "Hrubá chyba", "Katastrofální", "Dobrý tah", "Výborný", "Nejlepší tah", "Slabý tah"],
+            "forced": "Vynucený tah", "provisional": "předběžné", "eval": "Hodnocení", "best": "Nejlepší", "loss": "Ztráta hodnocení",
+            "depth": "Hloubka", "engine": "Motor", "bestLine": "Nejlepší varianta", "playedLine": "Zahraná varianta", "critical": "Kritický tah.",
+            "waiting": "Čeká se na zaznamenaný tah.", "mismatch": "Historie tahů nesouhlasí nebo varianta není podporována.",
+            "analyzing": "Analyzuji {move}…", "unavailable": "Hodnocení není dostupné."
+        },
+        "moveSpeech": {
+            "opponent": "Soupeř: {move}",
+            "advantage": ["Výrazně prohráváte", "Prohráváte", "Máte mírnou nevýhodu", "Pozice je vyrovnaná", "Máte mírnou výhodu", "Vyhráváte", "Výrazně vyhráváte"],
+            "lang": "cs-CZ", "pieces": { "K": "Král", "Q": "Dáma", "R": "Věž", "B": "Střelec", "N": "Jezdec" },
+            "move": "{piece} na {square}", "capture": "{piece} bere na {square}", "origin": "{piece} z {square}",
+            "promotion": "proměna: {piece}", "castleKingside": "Malá rošáda", "castleQueenside": "Velká rošáda",
+            "check": "šach", "checkmate": "mat"
+        },
+        "dynamicSettings": {
+            "title": "Dynamická nastavení", "subtitle": "Editor grafů · přizpůsobte nastavení hře", "addLine": "＋ Čára", "removeLine": "Odstranit čáru", "addPoint": "＋ Bod", "deletePoint": "Smazat bod", "curve": "Křivka", "selectLine": "Vyberte čáru", "step": "Stupňovitá", "linear": "Lineární", "smooth": "Hladká", "pieceCount": "Počet figur", "moveNumber": "Číslo tahu", "evaluation": "Hodnocení (vaše výhoda, cp)", "close": "Zavřít editor", "variable": "Proměnná grafu", "chooseSetting": "Nastavení k úpravě", "zoomIn": "Přiblížit", "zoomOut": "Oddálit", "fit": "Přizpůsobit graf", "coordinates": "Souřadnice bodu", "pointX": "Hodnota X bodu", "pointY": "Hodnota Y bodu",
+            "evaluationHint": "Záporné hodnoty znamenají prohru, nula rovnost, kladné výhru. Poslední dokončené hlavní hodnocení.", "fitHint": "Přizpůsobit obě osy s místem kolem čáry", "graphHint": "Přetahujte body a prázdné místo. Přibližujte rolováním nebo gestem. Šipky posunují bod, Shift o deset kroků, Delete maže.", "exitFullscreen": "Opustit celou obrazovku", "fullscreen": "Graf na celou obrazovku", "instance": "Instance", "equal": "Rovnost (0 cp)", "visibility": "Zobrazit a použít křivku nebo skrýt a vypnout", "enableLine": "Zapnout a zobrazit {setting} z {profile}", "selectedLine": "Vybráno: {setting}, {profile}", "chooseLine": "Vybrat {setting}, {profile}", "currentValue": "Aktuální hodnota {setting}", "otherVariable": "Žádné čáry pro {variable}. Existující křivky používají ", "noLines": "Žádné čáry. Vyberte nastavení, poté ＋ Čára.", "existingCurve": "Jedna křivka na nastavení a profil předchází konfliktům. Proměnná: {variable}. Pro změnu křivku upravte nebo odstraňte.", "addForProfile": "Přidat {setting} pro {profile}", "enableFirst": "Nejprve zapněte čáru v legendě", "addPointHint": "Přidat celočíselný bod", "stepLocked": "Toto nastavení vyžaduje stupňovitou křivku.", "editing": "Úprava {setting} z {profile}.", "removeFromProfile": "Odstranit {setting} z {profile}", "point": "Bod {number}", "selectPoint": "Vyberte bod pro úpravu souřadnic.", "profileLines": "Čáry profilů pro {setting}", "saveError": "Graf nelze uložit. Zkontrolujte spojení s userscriptem.", "variableLink": "Otevřít křivky pro {variable}", "removeConfirm": "Odstranit čáru {setting} z profilu \"{profile}\"?\n\nVšechny body budou smazány a uložená výchozí hodnota obnovena.", "none": "Žádné", "savedDefault": "Uložená výchozí hodnota", "unavailable": "{value} (nedostupné)", "override": "Dynamické přepsání aktivní: {value} ({variable}: {position}).", "waiting": "Křivka zapnuta · čekání na {variable}.", "defaultActive": "Křivka zapnuta · používá se uložená hodnota.", "disabled": "Dynamická křivka vypnuta.", "noCurve": "Žádná dynamická křivka zapnuta.", "description": "Uložená hodnota: {value}. Pole uchovává upravitelnou hodnotu používanou bez křivky. Křivku upravíte v dynamických nastaveních.", "openSetting": "Otevřít dynamická nastavení pro {setting}"
+        },
+        "activityLog": {
+            "title": "Protokol aktivit", "subtitle": "Zprávy enginu, dynamické změny, varování a chyby", "show": "Zobrazit", "clear": "Vymazat protokol", "filter": "Filtrovat podle typu", "all": "Všechny aktivity", "close": "Zavřít protokol", "instance": "Instance", "empty": "Zatím žádné záznamy.", "status": "Zobrazeno {shown} · celkem {total} · uchováno posledních {limit} této relace",
+            "types": { "engine-input": "Vstup enginu", "engine-output": "Výstup enginu", "dynamic-change": "Dynamické změny", "setting-change": "Změny nastavení", "engine": "Životní cyklus enginu", "instance": "Životní cyklus instance", "game": "Herní události", "site": "Zprávy webu", "warning": "Varování", "error": "Chyby", "app": "Události aplikace" }
+        },
         "profileRemovalWarning": "Opravdu chcete odstranit tento profil?\n\nTuto akci nelze vrátit.",
         "settingsResetWarning": "Opravdu chcete resetovat nastavení?\n\nNEBEZPEČÍ: Tato akce je nevratná a resetuje celou vaši konfiguraci!",
         "refreshSiteNotification": "Obnovte externí stránku, abyste viděli změny!",

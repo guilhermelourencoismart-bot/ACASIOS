@@ -39,10 +39,10 @@ export function getEngineCompatibility(engineName = 'maia3') {
         };
     }
 
-    if(!engineCapabilities.sharedMemory && ['stockfish-16-1-wasm', 'fairy-stockfish-nnue-wasm'].includes(engineName)) {
+    if(!engineCapabilities.sharedMemory && ['stockfish-16-1-wasm', 'stockfish-17', 'stockfish-18', 'stockfish-19', 'fairy-stockfish-nnue-wasm'].includes(engineName)) {
         return {
             supported: false,
-            fallback: 'stockfish-17-lite-single',
+            fallback: 'stockfish-19-lite-single',
             reason: 'This engine requires cross-origin isolated shared memory.'
         };
     }

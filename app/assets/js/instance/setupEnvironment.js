@@ -123,6 +123,7 @@ export default async function setupEnvironment(startpos, dimensions) {
             </div>
             <div class="instance-opening-container"><span></span></div>
             <div class="instance-control-status" aria-live="polite"></div>
+            <div class="instance-feedback-container ${isConcealAssistanceActive ? 'assistance-concealment-active' : ''}"></div>
             <div><div class="pseudoground-x"></div></div>
             `;
 

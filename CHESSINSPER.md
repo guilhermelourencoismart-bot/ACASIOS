@@ -2,6 +2,8 @@
 
 Esta versão do ACASIOS integra as funções de perfil, leitura visual e execução de lances do script enviado, **Chessrinsper — Stockfish 18 Mobile 1.2.1-rc.1**, à base do [A.C.A.S](https://github.com/Psyyke/A.C.A.S).
 
+A base foi atualizada para **A.C.A.S 2.5.0**, commit oficial `8522bf6bfb2363e666b8fd655327a39d885d0124`, de 1º de outubro de 2026. O userscript integrado é **2.5.0-chessinsper.2**. A atualização mantém as funções nativas, incluindo Stockfish 19, configurações dinâmicas, registro de atividade, avaliação de lances, variantes, livros de abertura e personalização da interface. Veja o [relatório para o usuário](RELATORIO-USUARIO.md).
+
 A engine é escolhida, carregada e executada pelo A.C.A.S. Chessinsper configura a análise e escolhe entre os candidatos legais retornados por ela. Setas, textos e marcações usam o `UniversalBoardDrawer` já empregado pelo A.C.A.S, tanto na interface quanto no tabuleiro externo.
 
 ## Instalar e usar
@@ -9,10 +11,12 @@ A engine é escolhida, carregada e executada pelo A.C.A.S. Chessinsper configura
 1. Instale ou atualize **[acas.user.js](acas.user.js)** no seu gerenciador de userscripts. Se preferir copiar o código, use **[acas.user.txt](acas.user.txt)**, que tem o mesmo conteúdo. O arquivo já inclui os componentes Chessinsper; não é necessário instalar outro script.
 2. Desative o Chessrinsper standalone para evitar dois scripts executando movimentos ou desenhando simultaneamente.
 3. Abra a interface **desta versão do ACASIOS**, selecione um perfil e uma das engines disponíveis no A.C.A.S.
-4. No painel **Chessinsper · Personalidade, visual e automação**, ajuste força, estilo, candidatos e aparência das setas. As configurações acompanham o perfil selecionado, inclusive os filtros de instância do A.C.A.S.
+4. Toque no botão flutuante **Ativar Chessinsper**, no canto inferior direito. Ele ativa o perfil selecionado e leva você ao painel **Chessinsper · Personalidade, visual e automação**. Ajuste força, estilo, candidatos e aparência das setas. As configurações acompanham o perfil selecionado, inclusive os filtros de instância do A.C.A.S. Instalações novas começam com Chessinsper desligado; perfis existentes conservam a ativação salva.
 5. Para executar lances, habilite **Auto Move** dentro do grupo Automação. Essa opção continua desligada por padrão. **After User** preserva a primeira posição observada para que você faça o lance inicial.
 
 É necessário atualizar a interface e o userscript juntos, pois eles usam novos comandos de comunicação. As versões públicas do A.C.A.S upstream não incluem esse painel.
+
+O mesmo botão desativa Chessinsper e restaura as configurações nativas da engine. Ativar Chessinsper não liga **Auto Move**. No celular, o botão respeita as margens seguras da tela; a disponibilidade da engine depende dos recursos do navegador. Quando falta memória compartilhada, as engines que a exigem usam Stockfish 19 Lite Single como alternativa.
 
 ## Funções integradas
 
@@ -38,7 +42,7 @@ Os componentes editáveis estão em `userscript-components/ChessinsperCore.js` e
 
 ```sh
 node scripts/build-userscript.mjs
-node --test tests/chessinsper.test.mjs
+node tests/chessinsper.test.mjs
 ```
 
 A geração também atualiza `acas.user.txt`, mantendo as versões para instalação e cópia com o mesmo conteúdo.
@@ -50,9 +54,11 @@ bash /workspace/acasios-cloud/start.sh
 node scripts/test-chessinsper-browser.cjs
 ```
 
-`ACAS_TEST_BASE_URL` permite apontar o teste para outra instalação local. `ACAS_TEST_SCREENSHOT_DIR` salva capturas do painel. O teste injeta uma implementação local das APIs GM e usa a engine Stockfish existente no repositório; a execução de movimentos é verificada em um tabuleiro artificial.
+`ACAS_TEST_BASE_URL` permite apontar o teste para outra instalação local. `ACAS_TEST_SCREENSHOT_DIR` salva capturas do painel. O teste injeta uma implementação local das APIs GM, verifica a comunicação real entre duas abas locais e usa a engine Stockfish existente no repositório; a execução de movimentos é verificada em um tabuleiro artificial.
 
-Foram verificados cálculos reais com a engine do A.C.A.S, desenho nativo de setas e indicadores, persistência, separação de perfis, layout em viewport móvel, retorno às configurações nativas e execução/cancelamento locais, incluindo arraste e promoção a cavalo. A execução em sites reais e em Safari/iOS precisa de validação nesses ambientes; viewport móvel do Chromium não equivale a esse teste.
+Foram verificados cálculos reais com Stockfish 19 Lite Single, desenho nativo de setas e indicadores, persistência, separação de perfis, layout em viewport móvel, retorno às configurações nativas e execução/cancelamento locais, incluindo arraste e promoção a cavalo. A execução em sites reais e em Safari/iOS precisa de validação nesses ambientes; viewport móvel do Chromium não equivale a esse teste.
+
+A suíte oficial `app/dev/dynamic-graph-tests.html` apresentou 146 verificações aprovadas em 149. As três falhas também ocorrem na base oficial sem alterações: a fixture do visualizador de atividade, a fixture de mudança de variante e o texto de contexto ausente nos atalhos. Os seis testes de funcionamento básico do ambiente passaram. O caminho relativo de abertura na página de desenvolvimento ainda produz um 404; o carregamento das aberturas na interface funciona.
 
 ## Origem e licença
 

@@ -23,6 +23,7 @@ const CONCEAL_ASSISTANCE_DELAY_KEY = 'concealAssistanceAutoDelayMs';
 const TOS_ACCEPTED_DB_KEY = 'isTosAccepted';
 
 const GUI_BROADCAST_NAME = 'gui';
+const DYNAMIC_SETTINGS_STORAGE_KEY = 'dynamicSettings';
 const EXTERNAL_UCI_BROADCAST_NAME = 'externalEngineUciFeed';
 const EXTERNAL_STATUS_BROADCAST_NAME = 'externalEngineStatusFeed';
 const DYNAMIC_BUTTONPRESS_BROADCAST_NAME = 'dynamicSettingButtonFeed';
@@ -48,6 +49,8 @@ const ACTIVE_INPUT_LISTENERS = [];
 
 const POLY_OPENING_BOOKS = new Map();
 
+const USERSCRIPT_MIN_VERSION = '2.5.0';
+
 let TRANS_OBJ = null; // set by translationProcessor.js
 let FULL_TRANS_OBJ = null; // set by translationProcessor.js
 let IS_INSTANCE_SETTING_BTN_DISABLED = false;
@@ -66,6 +69,53 @@ function FORCE_CLOSE_ALL_INSTANCES() {
             iObj.instance.close();
         }
     });
+}
+
+function CREATE_BOARD_DRAWER_MOVE_OBJ(
+    elem = null,
+    move,
+    profileID = null,
+    category = null
+) {
+    return {
+        elem,
+
+        data: {
+            // Shape
+            shapeType: move.shapeType ?? null,
+            shapeSquare: move.shapeSquare ?? null,
+            shapeConfig: move.shapeConfig ?? null,
+
+            // Player move
+            from: move.from ?? move.player?.[0] ?? null,
+            to: move.to ?? move.player?.[1] ?? null,
+
+            // Opponent move
+            oppFrom: move.oppFrom ?? move.opponent?.[0] ?? null,
+            oppTo: move.oppTo ?? move.opponent?.[1] ?? null,
+
+            // Move metadata
+            chessinsperHandled: !!move.chessinsperVisual,
+            playerPromotion: move.playerPromotion ?? null,
+            opponentPromotion: move.opponentPromotion ?? null,
+            cp: move.cp ?? null,
+            ranking: move.ranking ?? null,
+            isFuture: move.isFuture ?? null,
+            isOpponent: move.isOpponent ?? false,
+            forceHoverOnly: move.forceHoverOnly ?? false,
+            bringToFront: move.bringToFront ?? false,
+
+            // Identification
+            profileID,
+            category
+        }
+    };
+}
+
+function FORMAT_MOVE_OBJ_TO_EXTERNAL_SITE(moveObjs) {
+    if(!Array.isArray(moveObjs)) return [];
+
+    return moveObjs.map(x => x?.data ?? x);
 }
 
 function APPLY_ASSISTANCE_CONCEALMENT(isConcealed) {
@@ -96,7 +146,7 @@ function APPLY_ASSISTANCE_CONCEALMENT(isConcealed) {
         }
     });
 
-    const chessboardComponents = document.querySelectorAll('.chessboard-components');
+    const chessboardComponents = document.querySelectorAll('.chessboard-components, .instance-feedback-container');
 
     chessboardComponents.forEach(elem => {
         elem.classList.toggle('assistance-concealment-active', isConcealed);
@@ -295,6 +345,117 @@ function OBJECT_TO_STRING(obj) {
     return parts.join(', ');
 }
 
+async function SEND_WEBHOOK(data = {}) {
+    const instanceID = data.instanceId ?? SETTING_FILTER_OBJ.instanceID;
+    const profileID = data.profile ?? SETTING_FILTER_OBJ.profileID;
+
+    const getSetting = key =>
+        GET_GM_CFG_VALUE(key, instanceID, profileID);
+
+    const [
+        enabled,
+        url,
+        template,
+        includeBoard,
+        webhookAvatar
+    ] = await Promise.all([
+        getSetting('webhookEnabled'),
+        getSetting('webhookUrl'),
+        getSetting('webhookMessageTemplate'),
+        getSetting('webhookIncludeBoard'),
+        getSetting('webhookAvatar')
+    ]);
+
+    if(
+        !enabled ||
+        !/^https:\/\/discord(?:app)?\.com\/api\/webhooks\//i.test(url)
+    ) {
+        return false;
+    }
+
+    const variables = {
+        engine: 'A.C.A.S',
+        timestamp: new Date().toLocaleString(),
+        ...data,
+        profile: GET_HUMAN_READABLE_PROFILE_NAME(
+            data.profile ?? SETTING_FILTER_OBJ.profileID
+        )
+    };
+
+    const content = (template || '').replace(
+        /\{([a-zA-Z][a-zA-Z0-9_]*)\}/g,
+        (_, key) => variables[key] ?? ''
+    );
+
+    const embed = {
+        title: `Engine (${variables.engine})`,
+        description: content.slice(0, 4096) || undefined,
+        color: parseInt(
+            localStorage.getItem(THEME_COLOR_STORAGE_KEY)?.replace('#', ''),
+            16
+        ),
+        footer: {
+            text: `${variables.site || 'Hmm'} • ${variables.timestamp}`
+        }
+    };
+
+    const form = new FormData();
+
+    if(
+        includeBoard &&
+        typeof CAPTURE_BOARD_IMAGE === 'function'
+    ) {
+        const boardDataUrl =
+            await CAPTURE_BOARD_IMAGE(instanceID);
+
+        if(boardDataUrl) {
+            const blob = await fetch(boardDataUrl)
+                .then(response => response.blob());
+
+            form.append(
+                'files[0]',
+                blob,
+                'chess-board.png'
+            );
+
+            embed.image = {
+                url: 'attachment://chess-board.png'
+            };
+        }
+    }
+
+    form.append(
+        'payload_json',
+        JSON.stringify({
+            username: 'A.C.A.S',
+            avatar_url:
+                webhookAvatar ||
+                `${location.origin}/A.C.A.S/assets/images/logo-192.png`,
+            embeds: [embed]
+        })
+    );
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            body: form
+        });
+
+        if(!response.ok) {
+            console.warn(
+                `[SEND_WEBHOOK] Discord returned ${response.status}`
+            );
+
+            return false;
+        }
+
+        return true;
+    } catch (error) {
+        console.warn('[SEND_WEBHOOK] Failed:', error);
+        return false;
+    }
+}
+
 function REMOVE_PARAM_FROM_URL(paramName) {
     const newParams = new URLSearchParams(window.location.search);
     newParams.delete(paramName);
@@ -309,9 +470,12 @@ function SPEAK_TEXT(text, config = {}) {
         rate: config.rate || 1,     // [0.1, 10]
         volume: config.volume || 1, // [0, 1]
         voiceName: config.voiceName || undefined,
+        lang: config.lang || undefined,
+        preferLanguage: Boolean(config.preferLanguage),
     };
 
-    const cleanedText = text.replace(/[^a-zA-Z0-9\s]/g, '');
+    // Preserve translated words, including accents and non-Latin scripts.
+    const cleanedText = String(text).replace(/[^\p{L}\p{M}\p{N}\s\u200C\u200D,.'’-]/gu, '');
 
     if('speechSynthesis' in window) {
         const synthesis = window.speechSynthesis;
@@ -320,20 +484,27 @@ function SPEAK_TEXT(text, config = {}) {
         utterance.pitch = speechConfig.pitch;
         utterance.rate = speechConfig.rate;
         utterance.volume = speechConfig.volume;
+        if(speechConfig.lang) utterance.lang = speechConfig.lang;
 
-        if(speechConfig.voiceName) {
-            const voices = synthesis.getVoices();
-            const selectedVoice = voices.find(
-                voice => voice.name === speechConfig.voiceName
-            );
-
-            if(selectedVoice) {
-                utterance.voice = selectedVoice;
-            } else {
-                toast.error(TRANS_OBJ?.ttsVoiceNotFound ?? 'TTS voice not found!');
-                return;
+        const voices = synthesis.getVoices();
+        let selectedVoice = voices.find(voice => voice.name === speechConfig.voiceName);
+        if(speechConfig.voiceName && !selectedVoice && !speechConfig.preferLanguage) {
+            toast.error(TRANS_OBJ?.ttsVoiceNotFound ?? 'TTS voice not found!');
+            return;
+        }
+        if(speechConfig.lang) {
+            const language = speechConfig.lang.toLowerCase().replace(/_/g, '-');
+            const languageFamily = language.split('-')[0];
+            const voiceLanguage = voice => voice.lang.toLowerCase().replace(/_/g, '-');
+            // A previously selected English voice must not override translated audio.
+            if(!selectedVoice || (speechConfig.preferLanguage
+                && voiceLanguage(selectedVoice).split('-')[0] !== languageFamily)) {
+                selectedVoice = voices.find(voice => voiceLanguage(voice) === language)
+                    || voices.find(voice => voiceLanguage(voice).split('-')[0] === languageFamily);
             }
         }
+        // If no matching voice is installed, let the browser resolve utterance.lang.
+        if(selectedVoice) utterance.voice = selectedVoice;
 
         synthesis.speak(utterance);
         return synthesis;
@@ -626,6 +797,10 @@ function IS_PLAYER_ATTACKING_KING(currentFen, turn) {
 }
 
 async function GET_PROFILE(profileName) {
+    return GET_PROFILE_FOR_INSTANCE(profileName, SETTING_FILTER_OBJ.instanceID);
+}
+
+async function GET_PROFILE_FOR_INSTANCE(profileName, instanceID) {
     const gmConfigKey = USERSCRIPT_SHARED_VARS.gmConfigKey;
     const config = await USERSCRIPT.getValue(gmConfigKey);
 
@@ -633,41 +808,49 @@ async function GET_PROFILE(profileName) {
 
     let profile = { 'name': profileName, 'config': null };
 
-    const instanceProfileObj = config?.[SETTING_FILTER_OBJ.type]?.[SETTING_FILTER_OBJ.instanceID]?.['profiles']?.[profileKey];
-    const profileObj = config?.[SETTING_FILTER_OBJ.type]?.['profiles']?.[profileKey];
+    const instanceProfileObj = config?.instance?.[instanceID]?.['profiles']?.[profileKey];
     const globalProfileObj = config?.['global']?.['profiles']?.[profileKey];
 
-    if(instanceProfileObj) {
-        profile.config = { ...globalProfileObj, ...instanceProfileObj };
-
-    } else if(profileObj) {
-        profile.config = profileObj;
-    } else {
+    if(!instanceProfileObj && !globalProfileObj) {
         return false;
+    }
+
+    profile.config = { ...config?.global, ...config?.instance?.[instanceID], ...globalProfileObj, ...instanceProfileObj };
+    delete profile.config.profiles;
+    profile.config[DYNAMIC_SETTINGS_STORAGE_KEY] = {
+        ...globalProfileObj?.[DYNAMIC_SETTINGS_STORAGE_KEY],
+        ...instanceProfileObj?.[DYNAMIC_SETTINGS_STORAGE_KEY]
+    };
+
+    for(const [key, curve] of Object.entries(profile.config?.[DYNAMIC_SETTINGS_STORAGE_KEY] ?? {})) {
+        const baseValue = profile.config[key];
+        const resolved = DynamicSettingsCore?.resolveValue(
+            baseValue,
+            curve,
+            DynamicSettingsCore?.getContext(instanceID)
+        );
+        if(baseValue !== undefined && resolved !== undefined) profile.config[key] = resolved;
     }
 
     return profile;
 }
 
-async function GET_PROFILE_NAMES() {
+async function GET_PROFILE_NAMES(instanceID = SETTING_FILTER_OBJ.instanceID) {
     const gmConfigKey = USERSCRIPT_SHARED_VARS.gmConfigKey;
     const config = await USERSCRIPT.getValue(gmConfigKey);
 
-    const instanceProfilesObj = config?.[SETTING_FILTER_OBJ.type]?.[SETTING_FILTER_OBJ.instanceID]?.['profiles'];
-
-    if(instanceProfilesObj) return [...new Set(Object.keys(instanceProfilesObj))];
-
-    const profilesObj = config?.[SETTING_FILTER_OBJ.type]?.['profiles'];
-
-    if(profilesObj) return [...new Set(Object.keys(profilesObj))];
+    const globalProfilesObj = config?.global?.profiles;
+    const instanceProfilesObj = instanceID ? config?.instance?.[instanceID]?.profiles : null;
+    if(globalProfilesObj || instanceProfilesObj)
+        return [...new Set([...Object.keys(globalProfilesObj ?? {}), ...Object.keys(instanceProfilesObj ?? {})])];
 
     console.error('Could not find profile names!', { ...SETTING_FILTER_OBJ, gmConfigKey, config });
 
     return false;
 }
 
-async function GET_PROFILES() {
-    const profileNameArr = await GET_PROFILE_NAMES();
+async function GET_PROFILES(instanceID = SETTING_FILTER_OBJ.instanceID) {
+    const profileNameArr = await GET_PROFILE_NAMES(instanceID);
 
     if(!profileNameArr) {
         console.error('GET_PROFILES() failed, did not find any profile names!');
@@ -675,7 +858,9 @@ async function GET_PROFILES() {
         return [];
     }
 
-    const profileArr = await Promise.all(profileNameArr.map(profileName => GET_PROFILE(profileName)));
+    const profileArr = await Promise.all(profileNameArr.map(profileName =>
+        GET_PROFILE_FOR_INSTANCE(GET_HUMAN_READABLE_PROFILE_NAME(profileName), instanceID)
+    ));
 
     return profileArr;
 }
@@ -698,34 +883,51 @@ async function GET_GM_CFG_VALUE(key, instanceID, profileID) {
 
     const gmConfigKey = USERSCRIPT_SHARED_VARS.gmConfigKey;
     const config = await USERSCRIPT.getValue(gmConfigKey);
+    const profileKey = profileID ? GET_PROFILE_STORAGE_KEY(profileID) : null;
+    const globalProfile = profileKey ? config?.global?.profiles?.[profileKey] : null;
+    const instanceProfile = profileKey ? config?.instance?.[instanceID]?.profiles?.[profileKey] : null;
+    const source = instanceProfile?.[key] !== undefined ? instanceProfile
+        : globalProfile?.[key] !== undefined ? globalProfile
+        : config?.instance?.[instanceID]?.[key] !== undefined ? config.instance[instanceID]
+        : config?.global;
+    const value = source?.[key];
+    if(value === undefined) return null;
 
-    if(profileID) {
-        const profileKey = GET_PROFILE_STORAGE_KEY(profileID);
-
-        const globalProfileValue = config?.global?.['profiles']?.[profileKey]?.[key];
-        const instanceProfileValue = config?.instance?.[instanceID]?.['profiles']?.[profileKey]?.[key];
-
-        if(instanceProfileValue !== undefined) {
-            return instanceProfileValue;
-        }
-
-        if(globalProfileValue !== undefined) {
-            return globalProfileValue;
-        }
+    const curve = instanceProfile?.[DYNAMIC_SETTINGS_STORAGE_KEY]?.[key]
+        ?? globalProfile?.[DYNAMIC_SETTINGS_STORAGE_KEY]?.[key];
+    if(curve && curve.enabled) {
+        return DynamicSettingsCore?.resolveValue(
+            value,
+            curve,
+            DynamicSettingsCore?.getContext(instanceID)
+        ) ?? value;
     }
+    return value;
+}
 
-    const instanceValue = config?.instance?.[instanceID]?.[key];
-    const globalValue = config?.global?.[key];
+async function GET_GM_CFG_BASE_VALUE(key, instanceID, profileID) {
+    if(profileID === null) return null;
+    if(typeof profileID === 'object') profileID = profileID.name;
+    const config = await USERSCRIPT.getValue(USERSCRIPT_SHARED_VARS.gmConfigKey);
+    const profileKey = profileID ? GET_PROFILE_STORAGE_KEY(profileID) : null;
+    const instanceProfile = profileKey ? config?.instance?.[instanceID]?.profiles?.[profileKey] : null;
+    const globalProfile = profileKey ? config?.global?.profiles?.[profileKey] : null;
+    if(instanceProfile?.[key] !== undefined) return instanceProfile[key];
+    if(globalProfile?.[key] !== undefined) return globalProfile[key];
+    if(config?.instance?.[instanceID]?.[key] !== undefined) return config.instance[instanceID][key];
+    return config?.global?.[key] ?? null;
+}
 
-    if(instanceValue !== undefined) {
-        return instanceValue;
-    }
-
-    if(globalValue !== undefined) {
-        return globalValue;
-    }
-
-    return null;
+async function GET_GM_DYNAMIC_CURVE(key, instanceID, profileID) {
+    if(typeof profileID === 'object') profileID = profileID.name;
+    const config = await USERSCRIPT.getValue(USERSCRIPT_SHARED_VARS.gmConfigKey);
+    const profileKey = profileID ? GET_PROFILE_STORAGE_KEY(profileID) : null;
+    const instanceCurve = profileKey
+        ? config?.instance?.[instanceID]?.profiles?.[profileKey]?.[DYNAMIC_SETTINGS_STORAGE_KEY]?.[key]
+        : null;
+    return instanceCurve !== undefined
+        ? instanceCurve
+        : profileKey ? config?.global?.profiles?.[profileKey]?.[DYNAMIC_SETTINGS_STORAGE_KEY]?.[key] ?? null : null;
 }
 
 async function GET_GM_VALUES_STARTS_WITH(prefix, instanceID, profileID) {
@@ -741,7 +943,7 @@ async function GET_GM_VALUES_STARTS_WITH(prefix, instanceID, profileID) {
     function collectMatching(obj) {
         if(!obj) return;
         for(const k in obj) {
-            if(k.startsWith(prefix)) {
+            if(k.startsWith(prefix) && k !== DYNAMIC_SETTINGS_STORAGE_KEY && obj[k] !== undefined) {
                 result[k] = obj[k];
             }
         }
@@ -760,8 +962,12 @@ async function GET_GM_VALUES_STARTS_WITH(prefix, instanceID, profileID) {
     const instanceObj = config?.instance?.[instanceID];
     const globalObj = config?.global;
 
-    collectMatching(instanceObj);
     collectMatching(globalObj);
+    collectMatching(instanceObj);
+
+    for(const key of Object.keys(result)) {
+        result[key] = await GET_GM_CFG_VALUE(key, instanceID, profileID);
+    }
 
     return Object.keys(result).length ? result : null;
 }
@@ -843,12 +1049,18 @@ function PARSE_UCI_OPTION(line) {
     let min;
     let max;
     let vars;
+    const fields = new Set(['default', 'min', 'max', 'var']);
+    const readText = () => {
+        const parts = [];
+        while(i < tokens.length && !fields.has(tokens[i])) parts.push(tokens[i++]);
+        return parts.join(' ');
+    };
 
     while(i < tokens.length) {
         const t = tokens[i++];
 
-        if(t === 'default' && i < tokens.length) {
-            def = tokens[i++];
+        if(t === 'default') {
+            def = readText();
         } 
         else if(t === 'min' && i < tokens.length) {
             const v = Number(tokens[i++]);
@@ -858,14 +1070,12 @@ function PARSE_UCI_OPTION(line) {
             const v = Number(tokens[i++]);
             if(!Number.isNaN(v)) max = v;
         } 
-        else if(t === 'var' && i < tokens.length) {
+        else if(t === 'var') {
             if(!vars) vars = [];
-
+            const value = readText();
             if(vars.length < 1000) { // prevent unlimited growth
-                vars.push(tokens[i]);
+                vars.push(value);
             }
-
-            i++;
         }
     }
 
@@ -873,50 +1083,61 @@ function PARSE_UCI_OPTION(line) {
     if(type !== 'check' && (def === undefined || def === null)) def = '';
 
     return {
-        'name': VAR_TO_CORRECT_TYPE(name),
-        'type': VAR_TO_CORRECT_TYPE(type),
-        'def': VAR_TO_CORRECT_TYPE(def),
+        'name': name,
+        'type': type,
+        'def': type === 'combo' || type === 'string' ? def : VAR_TO_CORRECT_TYPE(def),
         'min': VAR_TO_CORRECT_TYPE(min),
         'max': VAR_TO_CORRECT_TYPE(max),
-        'vars': VAR_TO_CORRECT_TYPE(vars)
+        'vars': vars
     };
 }
 
 function PARSE_UCI_RESPONSE(response) {
-    const keywords = ['id', 'name', 'author', 'uciok', 'readyok', 
+    const keywords = [
+        'id', 'name', 'author', 'uciok', 'readyok',
         'bestmove', 'option', 'info', 'score', 'pv', 'mate', 'cp',
         'wdl', 'depth', 'seldepth', 'nodes', 'time', 'nps', 'tbhits',
         'currmove', 'currmovenumber', 'hashfull', 'multipv', 'prob',
         'refutation', 'line', 'stop', 'ponderhit', 'ucs', 'baseTurn',
         'position', 'startpos', 'moves', 'files', 'ranks',
-        'pocket', 'template', 'variant', 'ponder', 'Fen:', 'bmc', 'error'];
+        'pocket', 'template', 'variant', 'ponder', 'Fen:', 'bmc', 'error'
+    ];
 
     keywords.push(...keywords.map(k => k + 'San'));
 
     const data = {};
     let currentKeyword = null;
-    
-    response.split(/\s+/).forEach(token => {
+
+    response.trim().split(/\s+/).forEach(token => {
         if(keywords.includes(token) || token.startsWith('info')) {
             if(token.startsWith('info')) {
                 return;
             }
 
             currentKeyword = token;
-            data[currentKeyword] = '';
+
+            data[currentKeyword] = currentKeyword === 'wdl' ? [] : '';
 
         } else if(currentKeyword !== null) {
-            if(!isNaN(token) && !/^[rnbqkpRNBQKP\d]+$/.test(token)) {
-                data[currentKeyword] = parseInt(token);
+            const number = Number(token);
+
+            if(currentKeyword === 'wdl') {
+                if(Number.isFinite(number)) {
+                    data[currentKeyword].push(number);
+                }
+            } else if(['bestmove', 'ponder', 'pv', 'currmove'].includes(currentKeyword)) {
+                // Moves are strings, including the UCI null move "0000".
+                data[currentKeyword] += (data[currentKeyword] ? ' ' : '') + token;
+            } else if(token !== '' && Number.isFinite(number)) {
+                data[currentKeyword] = number;
             } else if(data[currentKeyword] !== '') {
-                data[currentKeyword] += ' ';
-                data[currentKeyword] += token;
+                data[currentKeyword] += ' ' + token;
             } else {
-                data[currentKeyword] += token;
+                data[currentKeyword] = token;
             }
         }
     });
-    
+
     return data;
 }
 

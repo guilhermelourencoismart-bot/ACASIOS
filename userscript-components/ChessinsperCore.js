@@ -26,7 +26,7 @@
   "use strict";
   const clone = (value) => JSON.parse(JSON.stringify(value));
   const DEFAULTS = {
-    enabled: true,
+    enabled: false,
     dragSpeed: 1,
     engineUI: {
       strength: 1800,

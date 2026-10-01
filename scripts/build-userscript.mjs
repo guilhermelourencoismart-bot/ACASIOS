@@ -25,6 +25,7 @@ if (script.includes(begin)) {
     throw new Error("A.C.A.S entry point not found");
   script = script.replace(anchor, bundle + anchor);
 }
+script = script.replace(/^[\t ]+$/gm, "").replace(/\n+$/, "\n");
 await writeFile(path, script);
 await writeFile(new URL("acas.user.txt", root), script);
 console.log(

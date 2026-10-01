@@ -2,6 +2,7 @@ import { saveSetting } from "../gui/settings.js";
 
 let storage,
   panel,
+  activationButton,
   saving = Promise.resolve(),
   initialized = false;
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -87,6 +88,14 @@ export function refreshChessinsperPanel() {
     else input.value = value;
   }
   panel.classList.toggle("chessinsper-disabled", !settings.enabled);
+  if (activationButton) {
+    activationButton.disabled = !SETTING_FILTER_OBJ.profileID;
+    activationButton.textContent = settings.enabled
+      ? "Chessinsper ativo · Desativar"
+      : "Ativar Chessinsper";
+    activationButton.setAttribute("aria-pressed", String(settings.enabled));
+    activationButton.title = `Perfil: ${SETTING_FILTER_OBJ.profileID || "padrão"}`;
+  }
   // Show one set of style and arrow controls while this profile owns them.
   for (const key of [
     "engineElo",
@@ -113,6 +122,21 @@ export function refreshChessinsperPanel() {
 export function initializeChessinsperPanel() {
   if (initialized) return;
   initialized = true;
+  activationButton = document.createElement("button");
+  activationButton.id = "chessinsper-activate";
+  activationButton.type = "button";
+  activationButton.className = "chessinsper-activate";
+  activationButton.setAttribute("aria-controls", "chessinsper-panel");
+  activationButton.addEventListener("click", async () => {
+    const settings = ChessinsperCore.normalizeSettings(storage.value);
+    settings.enabled = !settings.enabled;
+    await commit(settings);
+    if (settings.enabled) {
+      panel.scrollIntoView({ behavior: "smooth", block: "start" });
+      panel.querySelector("details").open = true;
+    }
+  });
+  document.body.append(activationButton);
   panel = document.createElement("section");
   panel.id = "chessinsper-panel";
   panel.className = "setting-panel chessinsper-panel";
@@ -447,7 +471,7 @@ export function initializeChessinsperPanel() {
   panel.append(actions);
   document.querySelector("#move-control-panel").after(panel);
   const logo = document.querySelector("#acas-logo-secondary");
-  if (logo) logo.textContent = "Chessinsper · Chess Assistance";
+  if (logo) logo.classList.add("chessinsper-brand");
   document.addEventListener("acas:settings-loaded", refreshChessinsperPanel);
   storage.addEventListener("change", refreshChessinsperPanel);
   refreshChessinsperPanel();

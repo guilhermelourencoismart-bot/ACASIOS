@@ -1,11 +1,18 @@
 import { setProfileBubbleStatus } from '../gui/profiles.js';
 import { getEngineCompatibility, isIOS, isMobile } from '../platformCapabilities.js';
+import { logActivity } from '../misc/activityLog.js';
 
 export default async function loadEngine(profileName, engineName, attempt = 0) {
-    const profileObj = await GET_PROFILE(profileName);
-    const requestedEngine = engineName || profileObj.config.chessEngine;
+    const profileVariables = this.pV[profileName];
+    const profileObj = await GET_PROFILE_FOR_INSTANCE(profileName, this.instanceID);
+    const isCurrentLoad = () => !this.instanceClosed && this.pV[profileName] === profileVariables;
+    if(!profileObj || !isCurrentLoad()) return;
+    const requestedEngine = engineName || profileVariables.startupConfig?.chessEngine || profileObj.config.chessEngine;
     const compatibility = getEngineCompatibility(requestedEngine);
     const profileChessEngine = compatibility.supported ? requestedEngine : compatibility.fallback;
+    logActivity('engine', `Loading ${profileChessEngine}${attempt ? ` (attempt ${attempt})` : ''}`, {
+        instanceID: this.instanceID, profile: profileName
+    });
     const isReload = attempt > 0;
     let alreadyRestarted = false;
 
@@ -31,11 +38,10 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
     }
 
     const processEngineMessage = msg => {
-        try {
-            this.engineMessageProcessor(msg, profileName);
-        } catch(e) {
+        if(!isCurrentLoad()) return;
+        this.engineMessageProcessor(msg, profileName).catch(e => {
             console.error('Engine', this.instanceID, profileName, 'error:', e);
-        }
+        });
     };
 
     // Load pollers were cleared only when the engine reported back. If the worker failed
@@ -45,11 +51,11 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
     this.pendingEngineLoads ??= new Set();
 
     const trackLoad = (worker, intervalId, engineLabel) => {
-        const entry = { worker, intervalId, timeoutId: null };
+        const entry = { worker, intervalId, profileName, timeoutId: null };
 
         entry.timeoutId = setTimeout(() => {
             restartEngine.bind(this)(
-                engineLabel,
+                engineLabel || profileChessEngine,
                 new Error(`${engineLabel} did not initialize before the timeout`),
                 entry
             );
@@ -78,6 +84,7 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
     };
 
     function restartEngine(name, e, loadEntry) {
+        if(!isCurrentLoad()) return;
         abandonLoad(loadEntry);
 
         // This guard was dead, the flag was never set, so every onerror re-closed the instance
@@ -89,7 +96,8 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
 
         if(isIOS && (name === 'maia2' || name === 'maia3')) {
             this.engines = this.engines.filter(item => item.worker !== loadEntry?.worker);
-            const fallback = 'stockfish-17-lite-single';
+            const fallback = 'stockfish-19-lite-single';
+            profileVariables.compatibilityFallback = fallback;
             const message = `${name} failed on iOS. Switching to ${fallback}.`;
             setProfileBubbleStatus('warning', profileName, message);
             toast.warning(message);
@@ -100,11 +108,12 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
         this.close(); // closing whole instance!
     }
 
-    async function startGame(variant = 'chess') {
+    async function startGame(variant = profileVariables.chessVariant ?? 'chess') {
+        if(!isCurrentLoad()) return;
         await this.engineStartNewGame(variant, profileName);
         await WAIT_UNTIL_VAR(() => this.instanceReady);
-
-        this.Interface.updateBoardFen({ 'skipValidityChecks': true, 'specificProfileName': profileName });
+        if(!isCurrentLoad()) return;
+        await this.Interface.updateBoardFen({ 'skipValidityChecks': true, 'specificProfileName': profileName });
     }
     
     function loadStockfish(folderName, fileName = folderName) {
@@ -112,8 +121,10 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
         let stockfish_loaded = false;
 
         stockfish.onmessage = async e => {
+            if(!isCurrentLoad()) { stockfish.terminate(); return; }
             if(!stockfish_loaded) {
                 stockfish_loaded = true;
+                finishLoad(loadEntry);
 
                 this.engines.push({
                     'type': profileChessEngine,
@@ -130,8 +141,9 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
         };
 
         stockfish.onerror = e => {
-            restartEngine.bind(this)(folderName, e);
+            restartEngine.bind(this)(folderName, e, loadEntry);
         };
+        const loadEntry = trackLoad(stockfish, null, folderName);
     }
 
     function loadFairyStockfish() {
@@ -139,6 +151,7 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
         let stockfish_loaded = false;
 
         stockfish.onmessage = async e => {
+            if(!isCurrentLoad()) { stockfish.terminate(); return; }
             if(e.data === true && !stockfish_loaded) {
                 stockfish_loaded = true;
 
@@ -175,6 +188,7 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
         let stockfish_loaded = false;
 
         stockfish.onmessage = async e => {
+            if(!isCurrentLoad()) { stockfish.terminate(); return; }
             if(e.data === true && !stockfish_loaded) {
                 stockfish_loaded = true;
 
@@ -186,7 +200,7 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
                     profileName
                 });
 
-                startGame.bind(this)('chess');
+                startGame.bind(this)();
             } else if(e.data) {
                 processEngineMessage(e.data);
             }
@@ -211,6 +225,7 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
         let lc0_loaded = false;
 
         lc0.onmessage = async e => {
+            if(!isCurrentLoad()) { lc0.terminate(); return; }
             if(e.data?.type === 'acas_error') {
                 restartEngine.bind(this)('lc0', new Error(e.data.message), loadEntry);
             } else if(e.data === true && !lc0_loaded) {
@@ -252,6 +267,7 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
         let fusion_loaded = false;
 
         Fusion.onmessage = async e => {
+            if(!isCurrentLoad()) { Fusion.terminate(); return; }
             if(e.data?.type === 'acas_error') {
                 restartEngine.bind(this)('acas-fusion', new Error(e.data.message), loadEntry);
             } else if(e.data === true && !fusion_loaded) {
@@ -339,6 +355,7 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
         let maia_loaded = false;
 
         maia.onmessage = async e => {
+            if(!isCurrentLoad()) { maia.terminate(); return; }
             if(e.data?.type === 'acas_error') {
                 restartEngine.bind(this)('maia3', new Error(e.data.message), loadEntry);
             } else if(e.data === true && !maia_loaded) {
@@ -370,6 +387,7 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
         maia.onerror = e => {
             restartEngine.bind(this)('maia3', e, loadEntry);
         };
+        trackLoad(maia, null);
     }
 
     function loadMaia2() {
@@ -377,6 +395,7 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
         let maia_loaded = false;
 
         maia.onmessage = async e => {
+            if(!isCurrentLoad()) { maia.terminate(); return; }
             if(e.data?.type === 'acas_error') {
                 restartEngine.bind(this)('maia2', new Error(e.data.message), loadEntry);
             } else if(e.data === true && !maia_loaded) {
@@ -411,10 +430,29 @@ export default async function loadEngine(profileName, engineName, attempt = 0) {
         };
     }
     
+    if(profileVariables.useExternalChessEngine) {
+        if(typeof profileVariables.externalChessEngine !== 'string' || !profileVariables.externalChessEngine.trim()) {
+            setProfileBubbleStatus('warning', profileName, 'Select an external engine before starting analysis.');
+            return;
+        }
+
+        // External engines have their own UCI handshake; don't load an unrelated web worker.
+        startGame.bind(this)().catch(console.error);
+        return;
+    }
+
     // When using loadStockfish(folderName, fileName), make sure the folder name
     // is exactly the same as the switch case string, since otherwise reloading wont work
     // "Maia 3" is the default
     switch(profileChessEngine) {
+        case 'stockfish-19':
+            loadStockfish.bind(this)('stockfish-19');
+            break;
+
+        case 'stockfish-19-lite-single':
+            loadStockfish.bind(this)('stockfish-19-lite-single');
+            break;
+
         case 'stockfish-18-single':
             loadStockfish.bind(this)('stockfish-18-single');
             break;

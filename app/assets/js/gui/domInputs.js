@@ -32,6 +32,10 @@ export function setInputValue(elem, val, min, max) {
 
         elem.value = VAR_TO_CORRECT_TYPE(val);
     }
+
+    // Notify descriptions/highlights after both text and checkbox updates.
+    // This is not a change event: loading a value must not save it again.
+    elem.dispatchEvent(new Event('acas-value-set'));
 }
 
 export function getInputValue(elem) {
@@ -105,6 +109,6 @@ export function initializeSettingInputElem(elem, skipDefaultValueSet) {
 }
 
 export function initializeInputElems() {
-    [...document.querySelectorAll('input[data-key]')]
+    [...document.querySelectorAll('input[data-key], textarea[data-key]')]
         .forEach(elem => initializeSettingInputElem(elem));
 }

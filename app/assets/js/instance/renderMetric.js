@@ -4,6 +4,8 @@ import { getChessinsper } from '../chessinsper/integration.js';
 import { chessinsperMetrics } from '../chessinsper/visuals.js';
 
 export default async function renderMetric(fen, profile) {
+    if(!this.pV[profile]) return;
+    const profileVariables = this.pV[profile];
     // Remove all previous metrics
     const previousMetrics = this.pV[profile].activeMetrics;
 
@@ -23,7 +25,14 @@ export default async function renderMetric(fen, profile) {
     const renderPiecePlayerCapture  = await this.getConfigValue(this.configKeys.renderPiecePlayerCapture, profile);
     const renderPieceEnemyCapture   = await this.getConfigValue(this.configKeys.renderPieceEnemyCapture, profile);
     const renderOnExternalSite      = await this.getConfigValue(this.configKeys.renderOnExternalSite, profile);
-    const enableEveryPieceEvals      = await this.getConfigValue(this.configKeys.enableEveryPieceEvals, profile);
+    const enableEveryPieceEvals     = await this.getConfigValue(this.configKeys.enableEveryPieceEvals, profile);
+    if(this.pV[profile] !== profileVariables || this.instanceClosed || this.currentFen !== fen) return;
+    if(!enableEveryPieceEvals && this.pV[profile]) {
+        profileVariables.pieceEvalRequest = (profileVariables.pieceEvalRequest || 0) + 1;
+        this.BoardPiecesEval?.cancelStaleRequests();
+        this.pV[profile].activePieceEvalDisplays?.forEach(marking => marking.elem?.remove());
+        this.pV[profile].activePieceEvalDisplays = [];
+    }
     const chessinsper = await getChessinsper(this, profile);
 
     const onlyRenderSquarePlayer = renderSquarePlayer && !(renderSquareEnemy || renderSquareContested);
@@ -39,22 +48,29 @@ export default async function renderMetric(fen, profile) {
         renderPieceEnemyCapture ||
         enableEveryPieceEvals || chessinsper?.settings.visualIntelligence.enabled
     )) {
+        this.CommLink.commands.renderVisualsToSite([{ profileID: profile, category: 'metric' }]);
         return;
     }
 
     const playerColor = await this.getPlayerColor(profile);
+    if(this.pV[profile] !== profileVariables || this.instanceClosed || this.currentFen !== fen) return;
     const addedMetrics = [];
     if(chessinsper && this.BoardDrawer) {
         for(const data of chessinsperMetrics(chessinsper, fen, playerColor)) {
             const elem = this.BoardDrawer.createShape(data.shapeType, data.shapeSquare, data.shapeConfig);
-            if(elem) addedMetrics.push({ elem, data });
+            if(elem) addedMetrics.push(CREATE_BOARD_DRAWER_MOVE_OBJ(elem, data, profile, 'metric'));
         }
     }
 
-    const BoardAnal = new BoardAnalyzer(fen, {
+    // Orthodox attack-map rules must not interfere with Fairy contribution analysis.
+    const standardMetrics = (!profileVariables.chessVariant || profileVariables.chessVariant === 'chess')
+        && !profileVariables.useChess960;
+    const hasAttackMetrics = standardMetrics && (renderSquarePlayer || renderSquareEnemy || renderSquareContested
+        || renderSquareSafe || renderPiecePlayerCapture || renderPieceEnemyCapture);
+    const BoardAnal = hasAttackMetrics ? new BoardAnalyzer(fen, {
         orientation: playerColor,
         debug: this.debugLogsEnabled
-    });
+    }) : null;
 
     const BoardDrawer = this.BoardDrawer;
 
@@ -71,14 +87,11 @@ export default async function renderMetric(fen, profile) {
             shapeConfig
         );
 
-        addedMetrics.push({
-            elem: rect,
-            data: {
-                shapeType,
-                shapeSquare,
-                shapeConfig
-            }
-        });
+        addedMetrics.push(CREATE_BOARD_DRAWER_MOVE_OBJ(rect, {
+            shapeType,
+            shapeSquare,
+            shapeConfig
+        }, profile, 'metric'));
     }
 
     function addText(squareFen, size, text, style, position) {
@@ -97,14 +110,11 @@ export default async function renderMetric(fen, profile) {
             shapeConfig
         );
 
-        addedMetrics.push({
-            elem: textElem,
-            data: {
-                shapeType,
-                shapeSquare,
-                shapeConfig
-            }
-        });
+        addedMetrics.push(CREATE_BOARD_DRAWER_MOVE_OBJ(textElem, {
+            shapeType,
+            shapeSquare,
+            shapeConfig
+        }, profile, 'metric'));
     }
 
     function addTextWithBorder(squareFen, size, text, style, position) {
@@ -181,21 +191,21 @@ export default async function renderMetric(fen, profile) {
         );
     }
 
-    const analResult = BoardAnal.analyze();
+    const analResult = BoardAnal?.analyze();
 
-    if(renderPiecePlayerCapture) {
+    if(analResult && renderPiecePlayerCapture) {
         analResult.player.forEach(piece =>
             renderDanger(piece, '💧')
         );
     }
 
-    if(renderPieceEnemyCapture) {
+    if(analResult && renderPieceEnemyCapture) {
         analResult.enemy.forEach(piece =>
             renderDanger(piece, '🩸')
         );
     }
 
-    if(renderSquarePlayer) {
+    if(analResult && renderSquarePlayer) {
         analResult.squares.playerOnly
             .forEach(pos => renderPlayerOnly(pos));
 
@@ -205,7 +215,7 @@ export default async function renderMetric(fen, profile) {
         }
     }
 
-    if(renderSquareEnemy) {
+    if(analResult && renderSquareEnemy) {
         analResult.squares.enemyOnly
             .forEach(pos => renderEnemyOnly(pos));
 
@@ -215,12 +225,12 @@ export default async function renderMetric(fen, profile) {
         }
     }
 
-    if(renderSquareContested) {
+    if(analResult && renderSquareContested) {
         analResult.squares.contested
             .forEach(obj => renderContested(obj));
     }
 
-    if(renderSquareSafe) {
+    if(analResult && renderSquareSafe) {
         analResult.squares.safe
             .forEach(pos => renderSafe(pos));
     }
@@ -232,6 +242,7 @@ export default async function renderMetric(fen, profile) {
         fen,
         profile
     );
+    if(this.pV[profile] !== profileVariables || this.instanceClosed || this.currentFen !== fen) return;
 
     if(renderOnExternalSite) {
         const allMetrics = [
@@ -239,14 +250,9 @@ export default async function renderMetric(fen, profile) {
             ...addedPieceEvals
         ];
 
-        const metricsWithoutElem = allMetrics.map(x => ({
-            ...x,
-            elem: null
-        }));
-
-        this.CommLink.commands.renderMetricsToSite(
-            metricsWithoutElem
-        );
+        this.CommLink.commands.renderVisualsToSite(allMetrics.length
+            ? FORMAT_MOVE_OBJ_TO_EXTERNAL_SITE(allMetrics)
+            : [{ profileID: profile, category: 'metric' }]);
     }
 }
 
@@ -254,20 +260,22 @@ export default async function renderMetric(fen, profile) {
 async function renderPieceEvals(fen, profile) {
     if(!fen) return [];
     if(!this.pV[profile]) return [];
+    const profileVariables = this.pV[profile];
 
     const enabled = await this.getConfigValue(
         this.configKeys.enableEveryPieceEvals,
         profile
     );
 
-    if(!enabled) return [];
+    if(!enabled || this.pV[profile] !== profileVariables || this.instanceClosed || this.currentFen !== fen) return [];
 
-    this._pieceEvalRequestId = (this._pieceEvalRequestId || 0) + 1;
+    profileVariables.pieceEvalRequest = (profileVariables.pieceEvalRequest || 0) + 1;
 
-    const requestId = this._pieceEvalRequestId;
+    const requestId = profileVariables.pieceEvalRequest;
 
     const isStale = () =>
-        requestId !== this._pieceEvalRequestId;
+        requestId !== profileVariables.pieceEvalRequest || this.pV[profile] !== profileVariables
+        || this.instanceClosed || this.currentFen !== fen;
 
     if(isStale()) return [];
 
@@ -316,7 +324,7 @@ async function renderPieceEvals(fen, profile) {
 
             for(const [square, value] of Object.entries(values)) {
                 const val = value.eval;
-                const text = val >= 10 ? val.toFixed(0) : val.toFixed(1);
+                const text = Math.abs(val) >= 10 ? val.toFixed(0) : val.toFixed(1);
 
                 const shapeType = 'text';
                 const shapeSquare = square;
@@ -334,14 +342,11 @@ async function renderPieceEvals(fen, profile) {
                     shapeConfig
                 );
 
-                addedDisplays.push({
-                    elem,
-                    data: {
-                        shapeType,
-                        shapeSquare,
-                        shapeConfig
-                    }
-                });
+                addedDisplays.push(CREATE_BOARD_DRAWER_MOVE_OBJ(elem, {
+                    shapeType,
+                    shapeSquare,
+                    shapeConfig
+                }, profile, 'metric'));
             }
 
             this.pV[profile].activePieceEvalDisplays.push(
@@ -349,6 +354,11 @@ async function renderPieceEvals(fen, profile) {
             );
 
             resolve(addedDisplays);
-        });
+        }, { fen, chessVariant: profileVariables.chessVariant || this.activeVariant,
+            useChess960: profileVariables.useChess960, isCurrent: () => !isStale() })
+            .catch(error => {
+                console.warn('[PieceEvaluator] Could not render contributions:', error);
+                resolve([]);
+            });
     });
 }
