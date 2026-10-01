@@ -6,6 +6,22 @@ export default async function updateSettings(updateObj) {
     const profileName = updateObj.data.profile.name || settingValue;
     const isDirectlyCausedByUser = updateObj.data.isDirectlyCausedByUser;
     const isDynamicUciSetting = settingKey.startsWith('DYNAMIC_');
+    if(settingKey === 'chessinsper' && this.pV[profileName]) {
+        const wasActive = this.pV[profileName].chessinsperRuntime?.settings.enabled;
+        if(wasActive && !ChessinsperCore.normalizeSettings(settingValue).enabled) {
+            this.pV[profileName].chessinsperRuntime = null;
+            // Reload native options instead of leaving the previous Chessinsper search budget in effect.
+            this.createAndLoadSpecificEngine(profileName);
+            return;
+        }
+        if(isDirectlyCausedByUser) {
+            this.renderMetric(this.currentFen, profileName);
+            const moves = this.pV[profileName].latestCandidates?.size
+                ? [...this.pV[profileName].latestCandidates.values()]
+                : GET_UNIQUE_MOVES(this.pV[profileName].pastMoveObjects.slice(-this.pV[profileName].multiPV))[0];
+            if(moves.length) this.displayMoves(moves, profileName, false, false);
+        }
+    }
 
     const profiles = await GET_PROFILES();
     const profilesWithDisabledEngine = profiles.filter(p => p.config.engineEnabled === false);

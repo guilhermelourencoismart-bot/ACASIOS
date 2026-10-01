@@ -108,7 +108,8 @@ export async function resetSettings() {
     }
 }
 
-export async function saveSetting(settingElem, isDirectlyCausedByUser = false) {
+export async function saveSetting(settingElem, isDirectlyCausedByUser = false, targetFilter = SETTING_FILTER_OBJ) {
+    const filter = { ...targetFilter };
     const elemValue = getInputValue(settingElem);
 
     const settingObj = { 'key': settingElem.dataset.key, 'value': VAR_TO_CORRECT_TYPE(elemValue) };
@@ -118,50 +119,50 @@ export async function saveSetting(settingElem, isDirectlyCausedByUser = false) {
 
     const noProfile = settingElem.dataset.noProfile;
 
-    const profileKey = GET_PROFILE_STORAGE_KEY(SETTING_FILTER_OBJ.profileID);
+    const profileKey = GET_PROFILE_STORAGE_KEY(filter.profileID);
 
-    if(SETTING_FILTER_OBJ.instanceID) {
+    if(filter.instanceID) {
         // Initialize the type object first
-        INIT_NESTED_OBJECT(config, [SETTING_FILTER_OBJ.type]);
-        let base = config[SETTING_FILTER_OBJ.type];
+        INIT_NESTED_OBJECT(config, [filter.type]);
+        let base = config[filter.type];
         
         // Initialize the instanceID object
-        INIT_NESTED_OBJECT(base, [SETTING_FILTER_OBJ.instanceID]);
+        INIT_NESTED_OBJECT(base, [filter.instanceID]);
     
         if (noProfile) {
             const valueToSave = settingObj.key === 'chessEngineProfile'
                 ? GET_PROFILE_STORAGE_KEY(settingObj.value)
                 : settingObj.value;
 
-            config[SETTING_FILTER_OBJ.type][SETTING_FILTER_OBJ.instanceID][settingObj.key] = valueToSave;
+            config[filter.type][filter.instanceID][settingObj.key] = valueToSave;
         } else {
             // Initialize profiles and profileID objects
-            INIT_NESTED_OBJECT(base[SETTING_FILTER_OBJ.instanceID], ['profiles', profileKey]);
+            INIT_NESTED_OBJECT(base[filter.instanceID], ['profiles', profileKey]);
     
-            config[SETTING_FILTER_OBJ.type][SETTING_FILTER_OBJ.instanceID]['profiles'][profileKey][settingObj.key] = settingObj.value;
+            config[filter.type][filter.instanceID]['profiles'][profileKey][settingObj.key] = settingObj.value;
         }
     } else {
         // Initialize the type object first so `base` is always defined
-        INIT_NESTED_OBJECT(config, [SETTING_FILTER_OBJ.type]);
-        let base = config[SETTING_FILTER_OBJ.type];
+        INIT_NESTED_OBJECT(config, [filter.type]);
+        let base = config[filter.type];
 
         if (noProfile) {
             const valueToSave = settingObj.key === 'chessEngineProfile'
                 ? GET_PROFILE_STORAGE_KEY(settingObj.value)
                 : settingObj.value;
 
-            config[SETTING_FILTER_OBJ.type][settingObj.key] = valueToSave;
+            config[filter.type][settingObj.key] = valueToSave;
         } else {
             // Initialize profiles and profileID objects
             INIT_NESTED_OBJECT(base, ['profiles', profileKey]);
 
-            config[SETTING_FILTER_OBJ.type]['profiles'][profileKey][settingObj.key] = settingObj.value;
+            config[filter.type]['profiles'][profileKey][settingObj.key] = settingObj.value;
         }
     }
 
     USERSCRIPT.setValue(gmConfigKey, config);
 
-    const profile = await GET_PROFILE(SETTING_FILTER_OBJ.profileID);
+    const profile = await GET_PROFILE(filter.profileID);
 
     guiBroadcastChannel.postMessage({
         'type': 'settingSave',
@@ -173,7 +174,7 @@ export async function saveSetting(settingElem, isDirectlyCausedByUser = false) {
         }
     });
     
-    console.log(`[Setting Handler] Added config key ${settingObj.key} with value ${settingObj.value}\n-> Instance ${SETTING_FILTER_OBJ.instanceID ? SETTING_FILTER_OBJ.instanceID : '(No instance)'}, Profile ${noProfile ? '(No profile)' : SETTING_FILTER_OBJ.profileID}`);
+    console.log(`[Setting Handler] Added config key ${settingObj.key} with value ${settingObj.value}\n-> Instance ${filter.instanceID ? filter.instanceID : '(No instance)'}, Profile ${noProfile ? '(No profile)' : filter.profileID}`);
 }
 
 export async function removeSetting(settingElem) {
@@ -227,6 +228,7 @@ export async function loopThroughAndUpdateSettingsValues(isDirectlyCausedByUser)
             runSettingChangeObserver(inputElem, 5, true);
         }
     }
+    document.dispatchEvent(new Event('acas:settings-loaded'));
 }
 
 export function scheduleSettingsUpdate(waitTime = 50) {

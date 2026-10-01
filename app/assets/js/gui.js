@@ -8,6 +8,7 @@ import { initializeInputElems } from './gui/domInputs.js';
 import { incrementUserUsageStat, updateUserUsageStats } from './gui/stats.js';
 import { fillProfileTabs, createNewProfile } from './gui/profiles.js';
 import { pipData, startPictureInPicture } from './gui/pip.js';
+import { initializeChessinsperPanel } from './chessinsper/panel.js';
 
 export const guiBroadcastChannel = new BroadcastChannel(GUI_BROADCAST_NAME);
 let initialized = false;
@@ -255,6 +256,7 @@ export async function initGUI() {
         }
     };
 
+    initializeChessinsperPanel();
     initializeFloatyButtons();
     initializeInputElems();
     initializePolyglotBookLoader();

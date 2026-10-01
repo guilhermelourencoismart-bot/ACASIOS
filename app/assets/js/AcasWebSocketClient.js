@@ -189,6 +189,8 @@ export async function sendUciToExternalEngine(command, engineId, profileName, in
 }
 
 export function closeAllExternalEnginesWithId(identifier, type) {
+    // Closing an in-browser engine must not start the optional external server connection.
+    if(!ws.socket || ws.socket.readyState !== WebSocket.OPEN) return;
     const data = {
         'type': 'closeEnginesByIdentifier',
         'msg': { identifier, type }

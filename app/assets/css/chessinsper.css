@@ -1,0 +1,91 @@
+.chessinsper-panel {
+  border-left: 3px solid #e53935;
+}
+.chessinsper-description {
+  font-size: 0.85rem;
+  line-height: 1.5;
+  opacity: 0.78;
+  margin: 8px 0 16px;
+}
+.chessinsper-panel details {
+  border-top: 1px solid #ffffff20;
+  padding: 12px 0;
+}
+.chessinsper-panel summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 6px 0;
+}
+.chessinsper-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 12px 18px;
+  padding-top: 14px;
+}
+.chessinsper-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.84rem;
+  line-height: 1.4;
+  min-height: 36px;
+}
+.chessinsper-field input:not([type="checkbox"]),
+.chessinsper-field select,
+.chessinsper-grid > select {
+  background: #0004;
+  color: inherit;
+  border: 1px solid #ffffff35;
+  border-radius: 7px;
+  padding: 7px;
+  max-width: 150px;
+  min-width: 64px;
+}
+.chessinsper-field input[type="checkbox"] {
+  accent-color: #e53935;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.chessinsper-field input[type="color"] {
+  width: 56px;
+  height: 32px;
+  padding: 2px;
+}
+.chessinsper-field option {
+  background: #202024;
+  color: #eee;
+}
+.chessinsper-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.chessinsper-actions button {
+  background: #e5393525;
+  color: inherit;
+  border: 1px solid #e5393580;
+  border-radius: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+.chessinsper-actions button:hover {
+  background: #e5393550;
+}
+.chessinsper-disabled details {
+  opacity: 0.6;
+}
+.chessinsper-native-hidden {
+  display: none !important;
+}
+@media (max-width: 700px) {
+  .chessinsper-grid {
+    grid-template-columns: 1fr;
+  }
+  .chessinsper-field input:not([type="checkbox"]),
+  .chessinsper-field select {
+    max-width: 140px;
+  }
+}

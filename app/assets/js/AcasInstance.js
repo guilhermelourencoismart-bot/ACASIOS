@@ -13,6 +13,7 @@ import { getDynamicOption } from './gui/dynamicEngineOptions.js';
 import { removeInstance } from './instanceManager.js';
 import { updatePipData } from './gui/pip.js';
 import { rankControlledMoves } from './chess/MoveControl.js';
+import { getChessinsper, visibleChessinsperMoves } from './chessinsper/integration.js';
 
 const logEngineMessages = false,
       debugLogsEnabled = false;
@@ -36,7 +37,7 @@ const configKeys = Object.freeze([
     'movesOnDemand', 'onlySuggestPieces', 'externalChessEngine',
     'playStyle', 'aggressionLevel', 'riskLevel', 'funMode',
     'candidatePoolSize', 'repertoireMode', 'whiteRepertoire',
-    'blackRepertoire', 'repertoireMaxPly'
+    'blackRepertoire', 'repertoireMaxPly', 'chessinsper'
 ].reduce((o, k) => (o[k] = k, o), {}));
 
 export default class AcasInstance {
@@ -183,6 +184,8 @@ export default class AcasInstance {
         this.CommLink.registerSendCommand('ping');
         this.CommLink.registerSendCommand('getFen');
         this.CommLink.registerSendCommand('markMoveToSite');
+        this.CommLink.registerSendCommand('chessinsperMove');
+        this.CommLink.registerSendCommand('chessinsperContext');
         this.CommLink.registerSendCommand('markBookToSite');
         this.CommLink.registerSendCommand('renderMetricsToSite');
         this.CommLink.registerSendCommand('feedbackToSite');
@@ -322,7 +325,11 @@ export default class AcasInstance {
                 this.Interface.updateBoardFen();
                 return true;
             case 'newMatchStarted':
+                Object.values(this.pV).forEach(pv => { pv.chessinsperSignature = null; });
                 this.engineStartNewGame();
+                return true;
+            case 'chessinsperMoveConfirmed':
+                this.pV[packet.data?.profile]?.chessinsperRuntime?.recordMove(packet.data);
                 return true;
             case 'calculateBestMoves':
                 this.calculateBestMoves(packet.data);
@@ -856,9 +863,9 @@ export default class AcasInstance {
         }
     }
 
-    async displayMoves(moveObjects, profile, bypassConcealmentCheck) {
+    async displayMoves(moveObjects, profile, bypassConcealmentCheck, finalResult = false) {
         if(CONCEAL_ASSISTANCE_ACTIVE && !bypassConcealmentCheck) {
-            this.pV[profile].pendingMoveDisplay = [moveObjects, profile, true];
+            this.pV[profile].pendingMoveDisplay = [moveObjects, profile, true, finalResult];
             return;
         }
 
@@ -881,18 +888,37 @@ export default class AcasInstance {
         const controlFen = this.pV[profile]?.lastCalculatedFen || this.currentFen;
         const isPlayerTurn = await this.isPlayerTurn(profile);
         const incomingFutureMoves = moveObjects.filter(move => move.isFuture);
-        const controlledMoves = rankControlledMoves(moveObjects.filter(move => !move.isFuture), {
+        const chessinsper = await getChessinsper(this, profile);
+        let controlledMoves = rankControlledMoves(moveObjects.filter(move => !move.isFuture), {
             fen: controlFen,
-            style: isPlayerTurn ? playStyle : 'engine',
+            style: isPlayerTurn && !chessinsper ? playStyle : 'engine',
             aggression,
             risk,
             funMode: isPlayerTurn ? funMode : 'off',
             repertoireMoves: isPlayerTurn ? (this.pV[profile]?.repertoireMoves || []) : [],
             repertoireMode: isPlayerTurn ? repertoireMode : 'off',
-            visibleCount: visibleMoveCount
+            visibleCount: chessinsper ? moveObjects.length : visibleMoveCount
         });
 
-        moveObjects = [...controlledMoves, ...incomingFutureMoves];
+        if(chessinsper && isPlayerTurn && (finalResult || this.pV[profile].chessinsperSelectionFen === controlFen)) {
+            const result = chessinsper.chooseMoves(controlFen, controlledMoves, {
+                ...this.pV[profile].chessinsperContext,
+                playerColor: await this.getPlayerColor(),
+                repertoireMoves: this.pV[profile].repertoireMoves || []
+            });
+            controlledMoves = result.moves;
+            this.pV[profile].chessinsperSelectionFen = controlFen;
+            if(finalResult && result.choice) this.CommLink.commands.chessinsperMove({
+                ...result.choice, profile, settings: chessinsper.settings, fen: controlFen
+            });
+        }
+
+        if(chessinsper) {
+            this.pV[profile].chessinsperSelection = controlledMoves[0];
+            controlledMoves = visibleChessinsperMoves(chessinsper, controlFen, controlledMoves, isPlayerTurn);
+        }
+
+        moveObjects = chessinsper ? controlledMoves : [...controlledMoves, ...incomingFutureMoves];
 
         const controlStatus = this.instanceElem?.querySelector('.instance-control-status');
         const topControlledMove = controlledMoves[0];
@@ -911,6 +937,11 @@ export default class AcasInstance {
             controlStatus.title = topControlledMove
                 ? `Selected from the engine candidate pool. Control score: ${Math.round(topControlledMove.controlScore || 0)}`
                 : '';
+            if(chessinsper) {
+                const choice = chessinsper.diagnostics().last;
+                controlStatus.textContent = `Chessinsper · ${chessinsper.settings.engineUI.strength} ELO · ${chessinsper.settings.engineUI.playingStyle}${finalResult && choice ? ` · ${choice.reason}` : ''}`;
+                controlStatus.title = choice ? `Lance ${choice.selected} · perda estimada ${Math.round(choice.cpLoss)} cp · ${choice.thinkCategory}` : 'Comparando os candidatos da engine selecionada.';
+            }
         }
 
         const normalMoves = moveObjects.filter(move => !move.isFuture);
@@ -918,6 +949,7 @@ export default class AcasInstance {
         const validFutureMoves = this.pV[profile].futureMoves
             // Filter out future moves that don't start from same square as parent move ends
             .filter(futureMove => {
+                if(chessinsper) return false;
                 const parent = futureMove.parentMove;
                 const futureStart = futureMove.player?.[0];
 
@@ -939,7 +971,7 @@ export default class AcasInstance {
 
         // Remove normal moves completely when opacity is <= 1 (1 - 100)
         // Only remove moves belonging to the current profile.
-        if (normalMoveOpacity <= 1) {
+        if (!chessinsper && normalMoveOpacity <= 1) {
             moveObjects = [
                 ...moveObjects.filter(move => move?.profile !== profile),
                 ...validFutureMoves
@@ -948,7 +980,11 @@ export default class AcasInstance {
             moveObjects = [...moveObjects, ...validFutureMoves];
         }
 
-        if(moveObjects?.length === 0) return;
+        if(moveObjects?.length === 0) {
+            this.Interface.removeMarkings(profile, 'Chessinsper visual filters');
+            if(displayMovesExternally) this.CommLink.commands.markMoveToSite([{profile, chessinsperHidden:true}]);
+            return;
+        }
     
         this.Interface.markMoves(moveObjects, profile);
 

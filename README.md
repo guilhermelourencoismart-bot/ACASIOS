@@ -2,6 +2,8 @@
 
 # A.C.A.S (Advanced Chess Assistance System)
 
+Este fork inclui **A.C.A.S × Chessinsper**: engines e desenho nativos do A.C.A.S com os perfis, controles visuais e automação adaptados do Chessinsper. Instale o [userscript deste repositório](acas.user.js) e use sua interface correspondente. Consulte [CHESSINSPER.md](CHESSINSPER.md) para instalação, funções integradas e testes.
+
 > [!WARNING]
 > A.C.A.S is currently in development. Expect bugs, especially on variants.
 

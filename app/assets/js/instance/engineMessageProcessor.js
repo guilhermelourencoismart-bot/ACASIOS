@@ -24,6 +24,17 @@ export default async function engineMessageProcessor(msg, profile) {
     const isMsgNoSuchOption = msg.includes('No such option') && !msg.includes('Variant') && !msg.includes('UCI_');
     const isMsgFailure = msg.includes('Failed') && !msg.includes('MIME type');
     const isMsgOption = msg.startsWith('option name ');
+    if(isMsgOption) {
+        const option = msg.match(/^option name (.+?) type (\w+)(.*)$/);
+        if(option) {
+            this.pV[profile].uciOptions ??= {};
+            this.pV[profile].uciOptions[option[1]] = {
+                type: option[2],
+                min: Number(option[3].match(/ min (-?\d+)/)?.[1]),
+                max: Number(option[3].match(/ max (-?\d+)/)?.[1])
+            };
+        }
+    }
 
     const finishOldestUnfinishedCalculation = () => {
         if(oldestUnfinishedCalcRequestObj)
@@ -135,6 +146,11 @@ export default async function engineMessageProcessor(msg, profile) {
             profile,
             ranking
         });
+        moveObj.mate = data?.mate == null ? null : Number(data.mate);
+        moveObj.depth = Number(data.depth) || 0;
+        moveObj.pv = moves.filter(Boolean).map(move => move.uci);
+        this.pV[profile].latestCandidates ??= new Map();
+        this.pV[profile].latestCandidates.set(ranking, moveObj);
 
         this.pV[profile].pastMoveObjects.push(moveObj);
 
@@ -201,16 +217,23 @@ export default async function engineMessageProcessor(msg, profile) {
 
         setProfileBubbleStatus('idle', profile, 'Idle, calculated best moves successfully!');
 
-        if(isMessageForCurrentFen && this.pV[profile].activeGuiMoveMarkings.length === 0) {
+        if(isMessageForCurrentFen && (this.pV[profile].chessinsperRuntime?.settings.enabled || this.pV[profile].activeGuiMoveMarkings.length === 0)) {
             const markingLimit = this.pV[profile].multiPV; // await this.getConfigValue(this.configKeys.moveSuggestionAmount, profile)
             const moveDisplayDelay = await this.getConfigValue(this.configKeys.moveDisplayDelay, profile);
             const isDelayActive = moveDisplayDelay && moveDisplayDelay > 0;
 
             let topMoveObjects = this.pV[profile].pastMoveObjects?.slice(markingLimit * -1);
+            if(this.pV[profile].chessinsperRuntime?.settings.enabled && this.pV[profile].latestCandidates?.size) {
+                topMoveObjects = [...this.pV[profile].latestCandidates.values()].sort((a,b) => a.ranking - b.ranking);
+            }
 
             if(topMoveObjects?.length === 0) {
                 topMoveObjects = [];
-                topMoveObjects.push({ 'player': [data.bestmove.slice(0,2), data.bestmove.slice(2, data.bestmove.length)], 'opponent': [null, null], 'ranking': 1  });
+                topMoveObjects.push({
+                    player: [data.bestmove.slice(0,2), data.bestmove.slice(2,4)],
+                    playerPromotion: data.bestmove[4] || null,
+                    opponent: [null, null], ranking: 1, profile
+                });
             } else {
                 topMoveObjects = GET_UNIQUE_MOVES(topMoveObjects)?.[0];
             }
@@ -226,12 +249,12 @@ export default async function engineMessageProcessor(msg, profile) {
 
                 setTimeout(() => {
                     if(startFen === this.currentFen && !this.isEngineCalculating(profile)) {
-                        this.displayMoves(topMoveObjects, profile);
+                        this.displayMoves(topMoveObjects, profile, false, true);
                     }
                 }, moveDisplayDelay);
             } else {
                 if(markingLimit !== 0)
-                    this.displayMoves(topMoveObjects, profile);
+                    this.displayMoves(topMoveObjects, profile, false, true);
             }
         }
     }

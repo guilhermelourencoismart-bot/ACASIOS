@@ -110,7 +110,7 @@ export default class Interface {
         const BoardDrawer = this.AcasInstance.BoardDrawer;
         const cfgKeys = this.AcasInstance.configKeys;
         
-        const [
+        let [
             arrowOpacity,
             showOpponentMoveGuess,
             showOpponentMoveGuessConstantly,
@@ -131,6 +131,15 @@ export default class Interface {
             this.AcasInstance.getConfigValue(cfgKeys.onlySuggestPieces, profile),
             this.AcasInstance.getConfigValue(cfgKeys.movesOnDemand, profile)
         ]);
+        const visual = moveObjArr[0]?.chessinsperVisual;
+        if(visual) {
+            arrowOpacity = visual.opacity;
+            primaryArrowColorHex = visual.primary;
+            secondaryArrowColorHex = visual.secondary;
+            opponentArrowColorHex = visual.opponent;
+            showOpponentMoveGuess = visual.showOpponent;
+            showOpponentMoveGuessConstantly = visual.constantOpponent;
+        }
     
         const markedSquares = [[], []]; // [primary, secondary]
     
@@ -203,6 +212,12 @@ export default class Interface {
                     : getArrowStyle('best', primaryArrowColorHex, arrowOpacity);
 
                 let [lineWidth, arrowheadWidth, arrowheadHeight, startOffset] = [30, 80, 60, 30];
+                if(visual) {
+                    lineWidth *= visual.scale * visual.lineWidth / 2;
+                    arrowheadWidth *= visual.scale;
+                    arrowheadHeight *= visual.scale;
+                    startOffset *= visual.scale;
+                }
 
                 if(idx !== 0) {
                     if(!mObj.isFuture) {

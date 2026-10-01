@@ -1,5 +1,7 @@
 import BoardAnalyzer from '../BoardAnalyzer.js';
 import PieceEvaluator from '../PieceEvaluator.js';
+import { getChessinsper } from '../chessinsper/integration.js';
+import { chessinsperMetrics } from '../chessinsper/visuals.js';
 
 export default async function renderMetric(fen, profile) {
     // Remove all previous metrics
@@ -22,6 +24,7 @@ export default async function renderMetric(fen, profile) {
     const renderPieceEnemyCapture   = await this.getConfigValue(this.configKeys.renderPieceEnemyCapture, profile);
     const renderOnExternalSite      = await this.getConfigValue(this.configKeys.renderOnExternalSite, profile);
     const enableEveryPieceEvals      = await this.getConfigValue(this.configKeys.enableEveryPieceEvals, profile);
+    const chessinsper = await getChessinsper(this, profile);
 
     const onlyRenderSquarePlayer = renderSquarePlayer && !(renderSquareEnemy || renderSquareContested);
     const onlyRenderSquareEnemy = renderSquareEnemy && !(renderSquarePlayer || renderSquareContested);
@@ -34,13 +37,19 @@ export default async function renderMetric(fen, profile) {
         renderSquareSafe ||
         renderPiecePlayerCapture ||
         renderPieceEnemyCapture ||
-        enableEveryPieceEvals
+        enableEveryPieceEvals || chessinsper?.settings.visualIntelligence.enabled
     )) {
         return;
     }
 
     const playerColor = await this.getPlayerColor(profile);
     const addedMetrics = [];
+    if(chessinsper && this.BoardDrawer) {
+        for(const data of chessinsperMetrics(chessinsper, fen, playerColor)) {
+            const elem = this.BoardDrawer.createShape(data.shapeType, data.shapeSquare, data.shapeConfig);
+            if(elem) addedMetrics.push({ elem, data });
+        }
+    }
 
     const BoardAnal = new BoardAnalyzer(fen, {
         orientation: playerColor,

@@ -3,6 +3,7 @@
 	<head>
 		<title>A.C.A.S</title>
 		<link rel="stylesheet" type="text/css" href="gui.css"/>
+		<link rel="stylesheet" href="assets/css/chessinsper.css"/>
 		<meta charset="UTF-8">
 		<meta name="description" content="Real-time chess assistant and move suggestions for Chess.com, Lichess, and more. Works on Android, Windows, and on so many other devices!">
 		<meta name="keywords" content="chess gui, chess assistant dashboard, stockfish settings, lichess helper, chess.com helper, board overlays, chess variants, engine elo">
@@ -34,6 +35,7 @@
 		<link rel="modulepreload" href="./assets/js/AcasWebSocketClient.js">
 		<link rel="modulepreload" href="./assets/js/gui.js">
 		<script src="../userscript-components/CommLink.js"></script>
+		<script src="../userscript-components/ChessinsperCore.js"></script>
 		<script src="../assets/libraries/FileSaver/FileSaver.js"></script>
 		<script src="../userscript-components/UniversalBoardDrawer.js"></script>
 		<script src="../assets/libraries/SnapDOM/snapdom.min.js"></script>
@@ -112,7 +114,7 @@
 				<img id="acas-logo-img" src="../assets/images/logo.png">
 				<div id="acas-logo-text-container">
 					<div id="acas-logo-main">A.C.A.S<div id="acas-version-tag">V2</div></div>
-					<div id="acas-logo-secondary">Chess Assistance</div>
+					<div id="acas-logo-secondary">Chessinsper · Chess Assistance</div>
 				</div>
 			</a>
 			<a id="update-your-userscript-notification" class="hidden" href="https://greasyfork.org/en/scripts/459137">UPDATE YOUR USERSCRIPT, NEW FEATURES MIGHT NOT WORK ON YOUR VERSION</a>

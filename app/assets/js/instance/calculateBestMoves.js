@@ -2,6 +2,7 @@ import { setProfileBubbleStatus } from '../gui/profiles.js';
 import { updatePipData } from '../gui/pip.js';
 import { incrementUserUsageStat } from '../gui/stats.js';
 import { getControlledSearchMoves } from '../chess/MoveControl.js';
+import { applyChessinsperSearch, getChessinsper } from '../chessinsper/integration.js';
 
 // This function is called every time a seemingly valid new board position is detected on the chess site DOM.
 // The userscript tries to filter out as many weird position changes as possible, but sometimes it can miss some.
@@ -49,6 +50,8 @@ export default async function calculateBestMoves(currentFen, config = {}) {
         this.pV[profileName].lastCalculatedFen = currentFen;
         this.pV[profileName].lastFen = currentFen;
         this.pV[profileName].pendingCalculations.push({ 'fen': currentFen, 'startedAt': Date.now(), 'finished': false });
+        this.pV[profileName].latestCandidates = new Map();
+        this.pV[profileName].chessinsperSelectionFen = null;
 
         this.Interface.removeMarkings(profileName, 'Calculating best moves');
 
@@ -61,6 +64,13 @@ export default async function calculateBestMoves(currentFen, config = {}) {
         if(specificMovesObj?.isOpponent) reversedFen = REVERSE_FEN_TURN(currentFen);
 
         const analysisFen = reversedFen || currentFen;
+        if(isPlayerTurn) {
+            const runtime = await getChessinsper(this, profileName);
+            if(runtime) {
+                this.pV[profileName].chessinsperContext = await this.CommLink.commands.chessinsperContext() || {};
+                await applyChessinsperSearch(this, profileName, analysisFen);
+            }
+        }
         this.sendMsgToEngine(`position fen ${analysisFen}`, profileName);
 
         const [funMode, repertoireMode, whiteRepertoire, blackRepertoire, repertoireMaxPly] = await Promise.all([
