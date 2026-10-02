@@ -6,7 +6,7 @@ let script = await readFile(path, "utf8");
 const begin = "// BEGIN CHESSINSPER BUNDLE",
   end = "// END CHESSINSPER BUNDLE";
 const modules = await Promise.all(
-  ["ChessinsperCore.js", "ChessinsperAutomation.js"].map((name) =>
+  ["ChessinsperCore.js", "ChessinsperAutomation.js", "ChessinsperBehavior.js"].map((name) =>
     readFile(new URL("userscript-components/" + name, root), "utf8"),
   ),
 );

@@ -3,6 +3,8 @@ import { saveSetting } from "../gui/settings.js";
 let storage,
   panel,
   activationButton,
+  sessionStatus,
+  sessionTimer,
   saving = Promise.resolve(),
   initialized = false;
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -79,6 +81,57 @@ function commit(settings) {
     });
   return saving;
 }
+async function sessionStates() {
+  if (!window.USERSCRIPT?.listValues) return [];
+  const profile = SETTING_FILTER_OBJ.profileID;
+  const keys = (await USERSCRIPT.listValues()).filter(
+    (key) =>
+      key.startsWith("ChessinsperBehavior:") && key.endsWith(":" + profile),
+  );
+  return (
+    await Promise.all(
+      keys.map(async (key) => ({ key, value: await USERSCRIPT.getValue(key) })),
+    )
+  ).filter((entry) => entry.value?.version === 1);
+}
+async function refreshSessionStatus() {
+  if (!sessionStatus) return;
+  try {
+    const states = (await sessionStates()).sort(
+      (a, b) => b.value.updatedAt - a.value.updatedAt,
+    );
+    if (!states.length) {
+      sessionStatus.textContent =
+        "Abra uma partida para acompanhar a sessão deste perfil.";
+      return;
+    }
+    sessionStatus.textContent = states
+      .map(({ key, value }) => {
+        const s = value.status;
+        const wait =
+          s.waitUntil > Date.now()
+            ? ` · ${Math.ceil((s.waitUntil - Date.now()) / 1000)} s`
+            : "";
+        const stale =
+          Date.now() - value.updatedAt > 30000 ? " · último estado salvo" : "";
+        return `${key.split(":")[1]} · ${s.reason}${wait}${stale}\n${s.games} partidas · ${s.wins} vitórias / ${s.losses} derrotas / ${s.draws} empates${s.unknown ? ` / ${s.unknown} sem resultado identificado` : ""}\nELO efetivo ${s.effectiveRating} · ${s.totalGames} partidas no histórico · ${s.moves} lances · perda média ${s.averageCPLoss} cp · ${s.recoveries} retomadas AFK`;
+      })
+      .join("\n\n");
+  } catch (error) {
+    console.warn("Chessinsper session status:", error);
+  }
+}
+async function sessionCommand(type) {
+  const states = await sessionStates();
+  for (const { key } of states)
+    USERSCRIPT.setValue(key + ":command", {
+      type,
+      id: `${Date.now()}:${Math.random()}`,
+    });
+  if (!states.length)
+    toast.message("Abra uma partida para controlar a sessão.");
+  else toast.message("Comando enviado à sessão deste perfil.");
+}
 export function refreshChessinsperPanel() {
   if (!storage || !panel) return;
   const settings = ChessinsperCore.normalizeSettings(storage.value);
@@ -88,6 +141,7 @@ export function refreshChessinsperPanel() {
     else input.value = value;
   }
   panel.classList.toggle("chessinsper-disabled", !settings.enabled);
+  void refreshSessionStatus();
   if (activationButton) {
     activationButton.disabled = !SETTING_FILTER_OBJ.profileID;
     activationButton.textContent = settings.enabled
@@ -419,6 +473,248 @@ export function initializeChessinsperPanel() {
     "Tempo para confirmar o lance (ms)",
     { type: "number", min: 200, max: 5000, step: 100 },
   );
+  const sessions = group("Sessões, fila e AFK");
+  control(sessions, "session.enabled", "Aplicar limites de sessão");
+  control(
+    sessions,
+    "session.autoQueue",
+    "Nova partida automática (requer Auto Move)",
+  );
+  for (const [path, label, min, max, step] of [
+    ["session.maxGamesPerSession", "Partidas por sessão", 1, 100, 1],
+    [
+      "session.breakDurationMs",
+      "Intervalo de sessão (ms)",
+      1000,
+      86400000,
+      1000,
+    ],
+    [
+      "session.maxWinStreak",
+      "Pausar após vitórias seguidas (0 = desligado)",
+      0,
+      100,
+      1,
+    ],
+    ["session.maxGamesPerHour", "Partidas por hora", 1, 100, 1],
+    [
+      "session.betweenGamesMs.min",
+      "Pausa mínima entre partidas (ms)",
+      0,
+      300000,
+      1000,
+    ],
+    [
+      "session.betweenGamesMs.max",
+      "Pausa máxima entre partidas (ms)",
+      0,
+      300000,
+      1000,
+    ],
+  ])
+    control(sessions, path, label, { type: "number", min, max, step });
+  control(
+    sessions,
+    "tcLock.enabled",
+    "Manter o ritmo de jogo durante a sessão",
+  );
+  control(sessions, "afk.enabled", "Recuperar sessão após AFK ou suspensão");
+  control(
+    sessions,
+    "afk.localKeepAlive",
+    "Pulso WebRTC local para segundo plano",
+  );
+  const afkNote = document.createElement("p");
+  afkNote.className = "chessinsper-description";
+  afkNote.textContent =
+    "O AFK retoma o estado salvo quando o navegador permite. No celular, mantenha o painel aberto: o sistema pode suspender as abas. O pulso local é opcional e pode aumentar o consumo de bateria.";
+  sessions.append(afkNote);
+  sessionStatus = document.createElement("div");
+  sessionStatus.id = "chessinsper-session-status";
+  sessionStatus.className = "chessinsper-session-status";
+  sessionStatus.setAttribute("aria-live", "polite");
+  sessions.append(sessionStatus);
+  const sessionActions = document.createElement("div");
+  sessionActions.className = "chessinsper-actions";
+  for (const [type, label] of [
+    ["pause", "Pausar sessão"],
+    ["resume", "Retomar sessão"],
+    ["reset", "Reiniciar sessão"],
+  ]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.onclick = () => sessionCommand(type);
+    sessionActions.append(button);
+  }
+  sessions.append(sessionActions);
+  const account = group("Comportamento entre partidas");
+  control(account, "warmup.enabled", "Aquecimento gradual do ELO");
+  control(
+    account,
+    "warmup.manualOverride",
+    "Usar ELO configurado durante o aquecimento",
+  );
+  control(account, "warmup.durationGames", "Partidas para aquecer", {
+    type: "number",
+    min: 1,
+    max: 100,
+    step: 1,
+  });
+  control(account, "warmup.startEloOffset", "Redução inicial de ELO", {
+    type: "number",
+    min: -1000,
+    max: 0,
+    step: 50,
+  });
+  control(
+    account,
+    "weaknessProfile.enabled",
+    "Fraquezas e ritmo consistentes por perfil",
+  );
+  control(account, "seed", "Semente da personalidade", { type: "text" });
+  control(account, "tilt.enabled", "Variar comportamento após derrota");
+  control(account, "tilt.durationGames", "Partidas de variação após derrota", {
+    type: "number",
+    min: 1,
+    max: 10,
+    step: 1,
+  });
+  control(
+    account,
+    "tilt.suboptimalBoost",
+    "Variação extra na escolha (0 a 0,3)",
+    { type: "number", min: 0, max: 0.3, step: 0.01 },
+  );
+  control(account, "tilt.timingMult", "Espera após derrota (multiplicador)", {
+    type: "number",
+    min: 0.5,
+    max: 3,
+    step: 0.1,
+  });
+  control(
+    account,
+    "hardwarePersona.enabled",
+    "Personalidade de clique e arraste",
+  );
+  control(
+    account,
+    "opponentAdaptation.enabled",
+    "Adaptar ELO ao adversário após aquecimento",
+  );
+  control(
+    account,
+    "opponentAdaptation.ratingEdge",
+    "Diferença de ELO sobre o adversário",
+    { type: "number", min: -500, max: 500, step: 50 },
+  );
+  control(
+    account,
+    "annotations.enabled",
+    "Anotar candidatos durante reflexão longa",
+  );
+  control(
+    account,
+    "annotations.minThinkMs",
+    "Reflexão mínima para anotar (ms)",
+    { type: "number", min: 1000, max: 60000, step: 500 },
+  );
+  control(
+    account,
+    "annotations.chancePerLongThink",
+    "Chance de anotação (0 a 1)",
+    { type: "number", min: 0, max: 1, step: 0.1 },
+  );
+  control(
+    account,
+    "autoResign.enabled",
+    "Abandonar automaticamente em posição perdida",
+  );
+  control(
+    account,
+    "autoResign.evalThreshold",
+    "Avaliação para abandono (peões)",
+    { type: "number", min: -30, max: -0.5, step: 0.5 },
+  );
+  control(
+    account,
+    "autoResign.consecutiveMoves",
+    "Posições perdidas seguidas para abandonar",
+    { type: "number", min: 1, max: 20, step: 1 },
+  );
+  control(
+    account,
+    "autoResign.minMoveNumber",
+    "Número mínimo do lance para abandono",
+    { type: "number", min: 1, max: 100, step: 1 },
+  );
+  control(account, "autoResign.resignChance", "Chance de abandono (0 a 1)", {
+    type: "number",
+    min: 0,
+    max: 1,
+    step: 0.1,
+  });
+  control(
+    account,
+    "winrateTarget.enabled",
+    "Adaptar força à taxa recente de vitórias",
+  );
+  control(account, "winrateTarget.target", "Taxa de vitórias alvo (0 a 1)", {
+    type: "number",
+    min: 0,
+    max: 1,
+    step: 0.01,
+  });
+  control(
+    account,
+    "winrateTarget.sampleGames",
+    "Partidas consideradas na taxa",
+    { type: "number", min: 2, max: 50, step: 1 },
+  );
+  control(account, "idleMouse.enabled", "Movimento do cursor durante espera");
+  control(
+    account,
+    "idleMouse.triggerAfterMs",
+    "Espera antes de mover o cursor (ms)",
+    { type: "number", min: 1000, max: 60000, step: 500 },
+  );
+  control(account, "postGame.enabled", "Pausa de revisão após a partida");
+  control(
+    account,
+    "postGame.reviewChance",
+    "Chance de pausa de revisão (0 a 1)",
+    { type: "number", min: 0, max: 1, step: 0.05 },
+  );
+  for (const [key, label] of [
+    ["min", "Revisão mínima (ms)"],
+    ["max", "Revisão máxima (ms)"],
+  ])
+    control(account, `postGame.reviewDurationMs.${key}`, label, {
+      type: "number",
+      min: 0,
+      max: 300000,
+      step: 1000,
+    });
+  const coach = group("Coach e estudo");
+  control(coach, "coach.enabled", "Ativar Coach");
+  control(
+    coach,
+    "coach.disableAutoOnEnable",
+    "Suspender execução automática durante Coach",
+  );
+  control(coach, "coach.showAlternatives", "Explicar alternativas próximas");
+  control(coach, "coach.showThreats", "Mostrar resposta prevista");
+  control(
+    coach,
+    "coach.showHangingPieces",
+    "Incluir peças penduradas nas marcações",
+  );
+  control(
+    coach,
+    "coach.altEvalWindow",
+    "Diferença máxima das alternativas (peões)",
+    { type: "number", min: 0, max: 5, step: 0.1 },
+  );
   const actions = document.createElement("div");
   actions.className = "chessinsper-actions";
   const importButton = document.createElement("button");
@@ -475,4 +771,10 @@ export function initializeChessinsperPanel() {
   document.addEventListener("acas:settings-loaded", refreshChessinsperPanel);
   storage.addEventListener("change", refreshChessinsperPanel);
   refreshChessinsperPanel();
+  sessionTimer = setInterval(() => {
+    if (!document.hidden) void refreshSessionStatus();
+  }, 3000);
+  window.addEventListener("pagehide", () => clearInterval(sessionTimer), {
+    once: true,
+  });
 }

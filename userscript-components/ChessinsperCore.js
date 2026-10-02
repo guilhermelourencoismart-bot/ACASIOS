@@ -155,6 +155,67 @@
       maxDelayMs: 5000,
       clockAware: true,
     },
+    session: {
+      enabled: true,
+      autoQueue: false,
+      maxGamesPerSession: 8,
+      breakDurationMs: 300000,
+      maxWinStreak: 6,
+      maxGamesPerHour: 6,
+      betweenGamesMs: { min: 3000, max: 12000 },
+    },
+    afk: { enabled: true, localKeepAlive: false },
+    warmup: {
+      enabled: true,
+      manualOverride: false,
+      durationGames: 12,
+      startEloOffset: -150,
+    },
+    winrateTarget: {
+      enabled: false,
+      target: 0.58,
+      sampleGames: 12,
+      overshootBoost: 0.4,
+    },
+    tilt: {
+      enabled: true,
+      durationGames: 2,
+      suboptimalBoost: 0.08,
+      blunderMult: 1.35,
+      timingMult: 1.2,
+    },
+    opponentAdaptation: { enabled: false, ratingEdge: 100 },
+    autoResign: {
+      enabled: false,
+      evalThreshold: -5,
+      consecutiveMoves: 3,
+      resignChance: 0.7,
+      minMoveNumber: 10,
+      delay: { min: 2000, max: 8000 },
+    },
+    annotations: {
+      enabled: false,
+      chancePerLongThink: 0.4,
+      minThinkMs: 3000,
+      maxPerThink: 3,
+    },
+    hardwarePersona: { enabled: true },
+    weaknessProfile: { enabled: true },
+    tcLock: { enabled: true },
+    idleMouse: { enabled: false, triggerAfterMs: 3500, actionChance: 0.35 },
+    postGame: {
+      enabled: true,
+      reviewChance: 0.18,
+      reviewDurationMs: { min: 4000, max: 14000 },
+    },
+    coach: {
+      enabled: false,
+      disableAutoOnEnable: true,
+      showAlternatives: true,
+      showThreats: true,
+      showHangingPieces: true,
+      altEvalWindow: 0.5,
+    },
     seed: "chessinsper-acas",
   };
   const INTERNAL_DEFAULTS = {
@@ -543,6 +604,18 @@
         input = {};
       }
     }
+    if (input?.auto)
+      input = {
+        ...input,
+        session: {
+          ...input.session,
+          autoQueue: input.session?.autoQueue ?? input.auto.autoQueue ?? false,
+        },
+        afk: {
+          ...input.afk,
+          enabled: input.afk?.enabled ?? input.auto.afkGuard ?? true,
+        },
+      };
     const settings = mergeKnown(DEFAULTS, input);
     const clamp = (v, a, b) => Math.max(a, Math.min(b, Number(v)));
     settings.dragSpeed = clamp(settings.dragSpeed, 0.25, 3);
@@ -634,6 +707,101 @@
     settings.inputExecution.stableReads = Math.round(
       clamp(settings.inputExecution.stableReads, 1, 4),
     );
+    for (const [key, min, max] of [
+      ["maxGamesPerSession", 1, 100],
+      ["breakDurationMs", 1000, 86400000],
+      ["maxWinStreak", 0, 100],
+      ["maxGamesPerHour", 1, 100],
+    ])
+      settings.session[key] = Math.round(
+        clamp(settings.session[key], min, max),
+      );
+    for (const range of [
+      settings.session.betweenGamesMs,
+      settings.postGame.reviewDurationMs,
+      settings.autoResign.delay,
+    ]) {
+      range.min = clamp(range.min, 0, 300000);
+      range.max = clamp(range.max, range.min, 300000);
+    }
+    settings.warmup.durationGames = Math.round(
+      clamp(settings.warmup.durationGames, 1, 100),
+    );
+    settings.warmup.startEloOffset = clamp(
+      settings.warmup.startEloOffset,
+      -1000,
+      0,
+    );
+    settings.winrateTarget.target = clamp(settings.winrateTarget.target, 0, 1);
+    settings.winrateTarget.sampleGames = Math.round(
+      clamp(settings.winrateTarget.sampleGames, 2, 50),
+    );
+    settings.winrateTarget.overshootBoost = clamp(
+      settings.winrateTarget.overshootBoost,
+      0,
+      1,
+    );
+    settings.tilt.durationGames = Math.round(
+      clamp(settings.tilt.durationGames, 1, 10),
+    );
+    settings.tilt.suboptimalBoost = clamp(
+      settings.tilt.suboptimalBoost,
+      0,
+      0.3,
+    );
+    settings.tilt.blunderMult = clamp(settings.tilt.blunderMult, 1, 3);
+    settings.tilt.timingMult = clamp(settings.tilt.timingMult, 0.5, 3);
+    settings.idleMouse.triggerAfterMs = clamp(
+      settings.idleMouse.triggerAfterMs,
+      1000,
+      60000,
+    );
+    settings.idleMouse.actionChance = clamp(
+      settings.idleMouse.actionChance,
+      0,
+      1,
+    );
+    settings.postGame.reviewChance = clamp(
+      settings.postGame.reviewChance,
+      0,
+      1,
+    );
+    settings.coach.altEvalWindow = clamp(settings.coach.altEvalWindow, 0, 5);
+    settings.opponentAdaptation.ratingEdge = clamp(
+      settings.opponentAdaptation.ratingEdge,
+      -500,
+      500,
+    );
+    settings.autoResign.evalThreshold = clamp(
+      settings.autoResign.evalThreshold,
+      -30,
+      -0.5,
+    );
+    settings.autoResign.consecutiveMoves = Math.round(
+      clamp(settings.autoResign.consecutiveMoves, 1, 20),
+    );
+    settings.autoResign.minMoveNumber = Math.round(
+      clamp(settings.autoResign.minMoveNumber, 1, 100),
+    );
+    settings.autoResign.resignChance = clamp(
+      settings.autoResign.resignChance,
+      0,
+      1,
+    );
+    settings.annotations.chancePerLongThink = clamp(
+      settings.annotations.chancePerLongThink,
+      0,
+      1,
+    );
+    settings.annotations.minThinkMs = clamp(
+      settings.annotations.minThinkMs,
+      1000,
+      60000,
+    );
+    settings.annotations.maxPerThink = Math.round(
+      clamp(settings.annotations.maxPerThink, 1, 3),
+    );
+    settings.seed = String(settings.seed).slice(0, 128);
     return settings;
   }
   const BoardIntelligence = {
@@ -1421,7 +1589,13 @@
     CONFIG.targetRating = settings.engineUI.strength;
     CONFIG.playStyle = settings.engineUI.playingStyle;
     CONFIG.humanization.enabled = settings.engineUI.humanMode;
-    CONFIG.humanization.weaknessProfile.seed = settings.seed;
+    let weaknessSeed = 2166136261;
+    for (const char of settings.seed)
+      weaknessSeed = Math.imul(weaknessSeed ^ char.charCodeAt(0), 16777619);
+    CONFIG.humanization.weaknessProfile.seed = weaknessSeed >>> 0 || 1;
+    CONFIG.humanization.weaknessProfile.enabled =
+      settings.weaknessProfile.enabled;
+    CONFIG.tilt = { ...CONFIG.tilt, ...settings.tilt };
     const State = {
       human: {
         ratingProfile: null,
@@ -1522,22 +1696,206 @@
     };
     const PlayerMoveDB = { getCached: () => [] };
     const WeaknessProfile = {
-      getExtraErrorRate: () => 0,
-      _identifyPiece: (fen, square) => {
-        const [file, rank] = BoardIntelligence.coord(square);
-        const piece = BoardIntelligence.parse(fen)[rank]?.[file];
-        return (
-          {
-            p: "pawn",
-            n: "knight",
-            b: "bishop",
-            r: "rook",
-            q: "queen",
-            k: "king",
-          }[piece?.toLowerCase()] || null
+      // Seeded PRNG (mulberry32) for deterministic weakness generation
+      _prng: (seed) => {
+        let s = seed | 0;
+        return () => {
+          s = (s + 0x6d2b79f5) | 0;
+          let t = Math.imul(s ^ (s >>> 15), 1 | s);
+          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      },
+
+      // All possible weakness dimensions a human can have
+      _dimensions: {
+        // Piece-type weaknesses: worse at using/defending specific pieces
+        pieces: ["knight", "bishop", "rook", "queen"],
+        // Phase weaknesses: worse in specific game phases
+        phases: ["opening", "middlegame", "endgame"],
+        // Endgame-type weaknesses
+        endgames: [
+          "rook_endgame",
+          "bishop_endgame",
+          "knight_endgame",
+          "pawn_endgame",
+          "queen_endgame",
+        ],
+        // Tactical motif blind spots
+        tactics: [
+          "fork",
+          "pin",
+          "skewer",
+          "discovery",
+          "back_rank",
+          "deflection",
+        ],
+        // Positional blind spots
+        positional: [
+          "pawn_structure",
+          "king_safety",
+          "piece_activity",
+          "space",
+          "weak_squares",
+        ],
+      },
+
+      init: () => {
+        const wp = CONFIG.humanization.weaknessProfile;
+        if (!wp.enabled) {
+          State.human.weaknesses = {
+            pieces: [],
+            phases: {},
+            endgames: [],
+            tactics: [],
+            positional: [],
+            extraErrorRate: {},
+          };
+          return;
+        }
+
+        // Generate or load seed
+        if (!wp.seed) {
+          wp.seed = Math.floor(Math.random() * 2147483647);
+          Settings.save(CONFIG);
+          Utils.log(`WeaknessProfile: Generated new seed ${wp.seed}`, "info");
+        }
+
+        const rng = WeaknessProfile._prng(wp.seed);
+        const pick = (arr, count) => {
+          const shuffled = [...arr];
+          for (let i = shuffled.length - 1; i > 0; i--) {
+            const j = Math.floor(rng() * (i + 1));
+            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+          }
+          return shuffled.slice(0, count);
+        };
+
+        // Each account gets 1-2 piece weaknesses, 1 phase weakness, 1-2 endgame weaknesses,
+        // 1-2 tactical blind spots, 1 positional weakness
+        const d = WeaknessProfile._dimensions;
+        const weakPieces = pick(d.pieces, 1 + (rng() < 0.4 ? 1 : 0));
+        const weakEndgames = pick(d.endgames, 1 + (rng() < 0.5 ? 1 : 0));
+        const weakTactics = pick(d.tactics, 1 + (rng() < 0.35 ? 1 : 0));
+        const weakPositional = pick(d.positional, 1);
+
+        // Phase weakness: one phase is noticeably worse
+        const phaseWeights = {};
+        for (const p of d.phases) {
+          phaseWeights[p] = 1.0; // baseline
+        }
+        const worstPhase = pick(d.phases, 1)[0];
+        phaseWeights[worstPhase] = 1.15 + rng() * 0.25; // 1.15-1.40x more errors in weak phase
+
+        // Generate extra error rates for each weakness (how much worse they are)
+        const extraError = {};
+        for (const p of weakPieces)
+          extraError[`piece_${p}`] = 0.04 + rng() * 0.05;
+        for (const e of weakEndgames)
+          extraError[`endgame_${e}`] = 0.05 + rng() * 0.06;
+        for (const t of weakTactics)
+          extraError[`tactic_${t}`] = 0.05 + rng() * 0.05;
+        for (const p of weakPositional)
+          extraError[`positional_${p}`] = 0.03 + rng() * 0.04;
+
+        State.human.weaknesses = {
+          pieces: weakPieces,
+          phases: phaseWeights,
+          endgames: weakEndgames,
+          tactics: weakTactics,
+          positional: weakPositional,
+          extraErrorRate: extraError,
+        };
+
+        // --- Multi-game behavioral consistency (item 5) ---
+        // Generate persistent player tempo and accuracy band from the same seed
+        // These make the account feel like a consistent person across many games
+        State.human.playerTempo = 0.8 + rng() * 0.4; // 0.80-1.20 (fast player vs slow player)
+        State.human.playerAccuracyBand = -0.04 + rng() * 0.08; // -0.04 to +0.04 shift on suboptimal rate
+
+        Utils.log(
+          `WeaknessProfile [seed=${wp.seed}]: pieces=${weakPieces}, phase=${worstPhase}(x${phaseWeights[worstPhase].toFixed(2)}), endgames=${weakEndgames}, tactics=${weakTactics}, positional=${weakPositional}, tempo=${State.human.playerTempo.toFixed(2)}, accuracyBand=${State.human.playerAccuracyBand.toFixed(3)}`,
+          "info",
         );
       },
+
+      // Returns extra suboptimal rate for the current position based on weaknesses
+      getExtraErrorRate: (fen, move) => {
+        const w = State.human.weaknesses;
+        if (!w || !CONFIG.humanization.weaknessProfile.enabled) return 0;
+
+        let extra = 0;
+        const phase = HumanStrategy.getGamePhase(fen);
+
+        // Phase weakness multiplier (applied as a multiplier to total rate externally)
+        // Here we return additive bonus
+        const phaseBonus = (w.phases[phase] || 1.0) - 1.0;
+        extra += phaseBonus * 0.06; // convert multiplier to small additive rate
+
+        // Piece involvement: check if the moving piece matches a weakness
+        if (move && move.length >= 4) {
+          const fromSq = move.substring(0, 2);
+          const movingPiece = WeaknessProfile._identifyPiece(fen, fromSq);
+          if (movingPiece && w.pieces.includes(movingPiece)) {
+            extra += w.extraErrorRate[`piece_${movingPiece}`] || 0;
+          }
+        }
+
+        // Endgame type weakness
+        if (phase === "endgame") {
+          const pieces = Utils.countPieces(fen);
+          const egType = WeaknessProfile._classifyEndgame(fen);
+          if (egType && w.endgames.includes(egType)) {
+            extra += w.extraErrorRate[`endgame_${egType}`] || 0;
+          }
+        }
+
+        return Math.min(extra, 0.15); // cap total extra at 15%
+      },
+
+      _identifyPiece: (fen, sq) => {
+        const board = fen.split(" ")[0];
+        const file = sq.charCodeAt(0) - 97;
+        const rank = parseInt(sq[1]) - 1;
+        const rows = board.split("/").reverse();
+        if (!rows[rank]) return null;
+        let col = 0;
+        for (const ch of rows[rank]) {
+          if (/\d/.test(ch)) {
+            col += parseInt(ch);
+            continue;
+          }
+          if (col === file) {
+            const map = {
+              n: "knight",
+              b: "bishop",
+              r: "rook",
+              q: "queen",
+              k: "king",
+              p: "pawn",
+            };
+            return map[ch.toLowerCase()] || null;
+          }
+          col++;
+        }
+        return null;
+      },
+
+      _classifyEndgame: (fen) => {
+        const board = fen.split(" ")[0].toLowerCase();
+        const hasQ = board.includes("q");
+        const hasR = board.includes("r");
+        const hasB = board.includes("b");
+        const hasN = board.includes("n");
+        if (hasQ && !hasR && !hasB && !hasN) return "queen_endgame";
+        if (hasR && !hasQ && !hasB && !hasN) return "rook_endgame";
+        if (hasB && !hasQ && !hasR && !hasN) return "bishop_endgame";
+        if (hasN && !hasQ && !hasR && !hasB) return "knight_endgame";
+        if (!hasQ && !hasR && !hasB && !hasN) return "pawn_endgame";
+        return null; // mixed — no specific type
+      },
     };
+
     const Utils = {
       log: () => {},
       countPieces: (fen) =>
@@ -4444,12 +4802,24 @@
       },
     };
 
+    WeaknessProfile.init();
     RatingProfile.apply(settings.engineUI.strength);
     CONFIG.humanization.enabled = settings.engineUI.humanMode;
     CONFIG.engineUI = settings.engineUI;
     const cached = new Map();
+    const confirmedMoves = new Set();
     function prepare(fen, extra = {}) {
       context = extra;
+      const effective = Number.isFinite(extra.effectiveRating)
+        ? Math.max(400, Math.min(3000, extra.effectiveRating))
+        : settings.engineUI.strength;
+      if (State.engineRuntime.effectiveStrength !== effective) {
+        State.engineRuntime.effectiveStrength = effective;
+        RatingProfile.apply(effective);
+        CONFIG.humanization.enabled = settings.engineUI.humanMode;
+        CONFIG.engineUI = settings.engineUI;
+      }
+      State.human.tiltActive = !!extra.tiltActive;
       State.lastFen = fen;
       State.playerColor = extra.playerColor || fen.split(" ")[1];
       State.moveCount = Math.max(
@@ -4467,11 +4837,11 @@
       prepare(fen, extra);
       const calibrated =
         settings.engineUI.humanMode && settings.engineUI.eloCalibration;
-      const cal = HumanCalibration.forRating(settings.engineUI.strength);
+      const cal = HumanCalibration.forRating(ProfileEngine.effectiveStrength());
       let depth = ProfileEngine.depthFor(fen);
       if (!calibrated && settings.engineUI.depthMode === "auto")
         depth = Math.round(
-          RatingProfile.profileFor(settings.engineUI.strength).depth,
+          RatingProfile.profileFor(ProfileEngine.effectiveStrength()).depth,
         );
       return {
         depth,
@@ -4479,7 +4849,7 @@
           settings.engineUI.candidateMoves,
           calibrated ? cal.searchMultiPV : 1,
         ),
-        strength: settings.engineUI.strength,
+        strength: ProfileEngine.effectiveStrength(),
       };
     }
     function chooseMoves(fen, moves, extra = {}) {
@@ -4513,9 +4883,10 @@
       const best = State.candidates[1].move;
       let choice = cached.get(fen);
       if (!choice) {
-        choice = settings.engineUI.humanMode
-          ? HumanMoveModel.choose(fen, best)
-          : { move: best, isBest: true, reason: "engine", cpLoss: 0 };
+        choice =
+          settings.engineUI.humanMode && !settings.coach.enabled
+            ? HumanMoveModel.choose(fen, best)
+            : { move: best, isBest: true, reason: "engine", cpLoss: 0 };
         cached.set(fen, choice);
         if (cached.size > 64) cached.delete(cached.keys().next().value);
       }
@@ -4548,8 +4919,22 @@
           Math.min(budget, Math.max(min, Math.min(max, delay))),
         ),
       };
+      const annotations = settings.annotations;
+      if (
+        annotations.enabled &&
+        choice.delayMs >= annotations.minThinkMs &&
+        choice.annotation === undefined
+      )
+        choice.annotation = Math.random() < annotations.chancePerLongThink;
+      cached.set(fen, choice);
       return {
-        moves: [selected, ...sorted.filter((m) => m !== selected)],
+        moves: [selected, ...sorted.filter((m) => m !== selected)].map(
+          (m, i) => ({
+            ...m,
+            chessinsperAnnotation:
+              !!choice.annotation && i < annotations.maxPerThink,
+          }),
+        ),
         choice,
       };
     }
@@ -4558,14 +4943,57 @@
       searchPlan,
       chooseMoves,
       recordMove: (entry) => {
-        if (entry?.move) {
-          HumanMoveModel.recordHistory(entry);
-          if (Number.isFinite(entry.cpLoss))
-            HumanStrategy.recordMoveCPLoss(entry.cpLoss);
-        }
+        if (!entry?.move) return;
+        const key = `${entry.fen}:${entry.move}`;
+        if (confirmedMoves.has(key)) return;
+        confirmedMoves.add(key);
+        if (confirmedMoves.size > 128)
+          confirmedMoves.delete(confirmedMoves.keys().next().value);
+        HumanStrategy.trackMove(entry.isBest ?? entry.cpLoss === 0, entry);
       },
       presets: clone(ProfileEngine.presets),
-      diagnostics: () => clone(State.diagnostics.humanModel),
+      coachReport: (fen, moves) => {
+        const ranked = [...moves].sort(
+          (a, b) => (a.ranking || 1) - (b.ranking || 1),
+        );
+        const best = ranked[0];
+        if (!best) return null;
+        const uci = best.player.join("") + (best.playerPromotion || "");
+        const feature = BoardIntelligence.moveFeatures(fen, uci);
+        const notes = [
+          feature.capture && "captura",
+          feature.type === "k" &&
+            Math.abs(uci.charCodeAt(0) - uci.charCodeAt(2)) === 2 &&
+            "roque",
+          uci.length === 5 && "promoção",
+          feature.development && "desenvolvimento",
+        ].filter(Boolean);
+        return {
+          move: uci,
+          notes,
+          alternatives: settings.coach.showAlternatives
+            ? ranked
+                .slice(1)
+                .filter(
+                  (m) =>
+                    best.mate == null &&
+                    m.mate == null &&
+                    Number.isFinite(m.cp) &&
+                    Math.abs(best.cp - m.cp) <=
+                      settings.coach.altEvalWindow * 100,
+                )
+                .map((m) => m.player.join("") + (m.playerPromotion || ""))
+                .slice(0, 3)
+            : [],
+          threat: settings.coach.showThreats ? best.pv?.[1] || null : null,
+        };
+      },
+      diagnostics: () => ({
+        ...clone(State.diagnostics.humanModel),
+        weaknesses: clone(State.human.weaknesses),
+        effectiveRating: ProfileEngine.effectiveStrength(),
+        tiltActive: State.human.tiltActive,
+      }),
     };
   }
   const api = {

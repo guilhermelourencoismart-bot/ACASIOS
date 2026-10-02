@@ -80,7 +80,7 @@
 // @require     https://update.greasyfork.org/scripts/470417/UniversalBoardDrawerjs.js?acasv=2
 // @require     https://update.greasyfork.org/scripts/591079/1919285/AutomaticMove.js
 // @icon        https://raw.githubusercontent.com/guilhermelourencoismart-bot/ACASIOS/main/assets/images/logo-192.png
-// @version     2.5.0-chessinsper.2
+// @version     2.5.0-chessinsper.3
 // @namespace    A.C.A.S × Chessinsper (ACASIOS)
 // @author      HKR
 // @license     GPL-3.0
@@ -508,6 +508,67 @@ const DynamicSettingsCore = (() => {
       maxDelayMs: 5000,
       clockAware: true,
     },
+    session: {
+      enabled: true,
+      autoQueue: false,
+      maxGamesPerSession: 8,
+      breakDurationMs: 300000,
+      maxWinStreak: 6,
+      maxGamesPerHour: 6,
+      betweenGamesMs: { min: 3000, max: 12000 },
+    },
+    afk: { enabled: true, localKeepAlive: false },
+    warmup: {
+      enabled: true,
+      manualOverride: false,
+      durationGames: 12,
+      startEloOffset: -150,
+    },
+    winrateTarget: {
+      enabled: false,
+      target: 0.58,
+      sampleGames: 12,
+      overshootBoost: 0.4,
+    },
+    tilt: {
+      enabled: true,
+      durationGames: 2,
+      suboptimalBoost: 0.08,
+      blunderMult: 1.35,
+      timingMult: 1.2,
+    },
+    opponentAdaptation: { enabled: false, ratingEdge: 100 },
+    autoResign: {
+      enabled: false,
+      evalThreshold: -5,
+      consecutiveMoves: 3,
+      resignChance: 0.7,
+      minMoveNumber: 10,
+      delay: { min: 2000, max: 8000 },
+    },
+    annotations: {
+      enabled: false,
+      chancePerLongThink: 0.4,
+      minThinkMs: 3000,
+      maxPerThink: 3,
+    },
+    hardwarePersona: { enabled: true },
+    weaknessProfile: { enabled: true },
+    tcLock: { enabled: true },
+    idleMouse: { enabled: false, triggerAfterMs: 3500, actionChance: 0.35 },
+    postGame: {
+      enabled: true,
+      reviewChance: 0.18,
+      reviewDurationMs: { min: 4000, max: 14000 },
+    },
+    coach: {
+      enabled: false,
+      disableAutoOnEnable: true,
+      showAlternatives: true,
+      showThreats: true,
+      showHangingPieces: true,
+      altEvalWindow: 0.5,
+    },
     seed: "chessinsper-acas",
   };
   const INTERNAL_DEFAULTS = {
@@ -896,6 +957,18 @@ const DynamicSettingsCore = (() => {
         input = {};
       }
     }
+    if (input?.auto)
+      input = {
+        ...input,
+        session: {
+          ...input.session,
+          autoQueue: input.session?.autoQueue ?? input.auto.autoQueue ?? false,
+        },
+        afk: {
+          ...input.afk,
+          enabled: input.afk?.enabled ?? input.auto.afkGuard ?? true,
+        },
+      };
     const settings = mergeKnown(DEFAULTS, input);
     const clamp = (v, a, b) => Math.max(a, Math.min(b, Number(v)));
     settings.dragSpeed = clamp(settings.dragSpeed, 0.25, 3);
@@ -987,6 +1060,101 @@ const DynamicSettingsCore = (() => {
     settings.inputExecution.stableReads = Math.round(
       clamp(settings.inputExecution.stableReads, 1, 4),
     );
+    for (const [key, min, max] of [
+      ["maxGamesPerSession", 1, 100],
+      ["breakDurationMs", 1000, 86400000],
+      ["maxWinStreak", 0, 100],
+      ["maxGamesPerHour", 1, 100],
+    ])
+      settings.session[key] = Math.round(
+        clamp(settings.session[key], min, max),
+      );
+    for (const range of [
+      settings.session.betweenGamesMs,
+      settings.postGame.reviewDurationMs,
+      settings.autoResign.delay,
+    ]) {
+      range.min = clamp(range.min, 0, 300000);
+      range.max = clamp(range.max, range.min, 300000);
+    }
+    settings.warmup.durationGames = Math.round(
+      clamp(settings.warmup.durationGames, 1, 100),
+    );
+    settings.warmup.startEloOffset = clamp(
+      settings.warmup.startEloOffset,
+      -1000,
+      0,
+    );
+    settings.winrateTarget.target = clamp(settings.winrateTarget.target, 0, 1);
+    settings.winrateTarget.sampleGames = Math.round(
+      clamp(settings.winrateTarget.sampleGames, 2, 50),
+    );
+    settings.winrateTarget.overshootBoost = clamp(
+      settings.winrateTarget.overshootBoost,
+      0,
+      1,
+    );
+    settings.tilt.durationGames = Math.round(
+      clamp(settings.tilt.durationGames, 1, 10),
+    );
+    settings.tilt.suboptimalBoost = clamp(
+      settings.tilt.suboptimalBoost,
+      0,
+      0.3,
+    );
+    settings.tilt.blunderMult = clamp(settings.tilt.blunderMult, 1, 3);
+    settings.tilt.timingMult = clamp(settings.tilt.timingMult, 0.5, 3);
+    settings.idleMouse.triggerAfterMs = clamp(
+      settings.idleMouse.triggerAfterMs,
+      1000,
+      60000,
+    );
+    settings.idleMouse.actionChance = clamp(
+      settings.idleMouse.actionChance,
+      0,
+      1,
+    );
+    settings.postGame.reviewChance = clamp(
+      settings.postGame.reviewChance,
+      0,
+      1,
+    );
+    settings.coach.altEvalWindow = clamp(settings.coach.altEvalWindow, 0, 5);
+    settings.opponentAdaptation.ratingEdge = clamp(
+      settings.opponentAdaptation.ratingEdge,
+      -500,
+      500,
+    );
+    settings.autoResign.evalThreshold = clamp(
+      settings.autoResign.evalThreshold,
+      -30,
+      -0.5,
+    );
+    settings.autoResign.consecutiveMoves = Math.round(
+      clamp(settings.autoResign.consecutiveMoves, 1, 20),
+    );
+    settings.autoResign.minMoveNumber = Math.round(
+      clamp(settings.autoResign.minMoveNumber, 1, 100),
+    );
+    settings.autoResign.resignChance = clamp(
+      settings.autoResign.resignChance,
+      0,
+      1,
+    );
+    settings.annotations.chancePerLongThink = clamp(
+      settings.annotations.chancePerLongThink,
+      0,
+      1,
+    );
+    settings.annotations.minThinkMs = clamp(
+      settings.annotations.minThinkMs,
+      1000,
+      60000,
+    );
+    settings.annotations.maxPerThink = Math.round(
+      clamp(settings.annotations.maxPerThink, 1, 3),
+    );
+    settings.seed = String(settings.seed).slice(0, 128);
     return settings;
   }
   const BoardIntelligence = {
@@ -1774,7 +1942,13 @@ const DynamicSettingsCore = (() => {
     CONFIG.targetRating = settings.engineUI.strength;
     CONFIG.playStyle = settings.engineUI.playingStyle;
     CONFIG.humanization.enabled = settings.engineUI.humanMode;
-    CONFIG.humanization.weaknessProfile.seed = settings.seed;
+    let weaknessSeed = 2166136261;
+    for (const char of settings.seed)
+      weaknessSeed = Math.imul(weaknessSeed ^ char.charCodeAt(0), 16777619);
+    CONFIG.humanization.weaknessProfile.seed = weaknessSeed >>> 0 || 1;
+    CONFIG.humanization.weaknessProfile.enabled =
+      settings.weaknessProfile.enabled;
+    CONFIG.tilt = { ...CONFIG.tilt, ...settings.tilt };
     const State = {
       human: {
         ratingProfile: null,
@@ -1875,22 +2049,206 @@ const DynamicSettingsCore = (() => {
     };
     const PlayerMoveDB = { getCached: () => [] };
     const WeaknessProfile = {
-      getExtraErrorRate: () => 0,
-      _identifyPiece: (fen, square) => {
-        const [file, rank] = BoardIntelligence.coord(square);
-        const piece = BoardIntelligence.parse(fen)[rank]?.[file];
-        return (
-          {
-            p: "pawn",
-            n: "knight",
-            b: "bishop",
-            r: "rook",
-            q: "queen",
-            k: "king",
-          }[piece?.toLowerCase()] || null
+      // Seeded PRNG (mulberry32) for deterministic weakness generation
+      _prng: (seed) => {
+        let s = seed | 0;
+        return () => {
+          s = (s + 0x6d2b79f5) | 0;
+          let t = Math.imul(s ^ (s >>> 15), 1 | s);
+          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      },
+
+      // All possible weakness dimensions a human can have
+      _dimensions: {
+        // Piece-type weaknesses: worse at using/defending specific pieces
+        pieces: ["knight", "bishop", "rook", "queen"],
+        // Phase weaknesses: worse in specific game phases
+        phases: ["opening", "middlegame", "endgame"],
+        // Endgame-type weaknesses
+        endgames: [
+          "rook_endgame",
+          "bishop_endgame",
+          "knight_endgame",
+          "pawn_endgame",
+          "queen_endgame",
+        ],
+        // Tactical motif blind spots
+        tactics: [
+          "fork",
+          "pin",
+          "skewer",
+          "discovery",
+          "back_rank",
+          "deflection",
+        ],
+        // Positional blind spots
+        positional: [
+          "pawn_structure",
+          "king_safety",
+          "piece_activity",
+          "space",
+          "weak_squares",
+        ],
+      },
+
+      init: () => {
+        const wp = CONFIG.humanization.weaknessProfile;
+        if (!wp.enabled) {
+          State.human.weaknesses = {
+            pieces: [],
+            phases: {},
+            endgames: [],
+            tactics: [],
+            positional: [],
+            extraErrorRate: {},
+          };
+          return;
+        }
+
+        // Generate or load seed
+        if (!wp.seed) {
+          wp.seed = Math.floor(Math.random() * 2147483647);
+          Settings.save(CONFIG);
+          Utils.log(`WeaknessProfile: Generated new seed ${wp.seed}`, "info");
+        }
+
+        const rng = WeaknessProfile._prng(wp.seed);
+        const pick = (arr, count) => {
+          const shuffled = [...arr];
+          for (let i = shuffled.length - 1; i > 0; i--) {
+            const j = Math.floor(rng() * (i + 1));
+            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+          }
+          return shuffled.slice(0, count);
+        };
+
+        // Each account gets 1-2 piece weaknesses, 1 phase weakness, 1-2 endgame weaknesses,
+        // 1-2 tactical blind spots, 1 positional weakness
+        const d = WeaknessProfile._dimensions;
+        const weakPieces = pick(d.pieces, 1 + (rng() < 0.4 ? 1 : 0));
+        const weakEndgames = pick(d.endgames, 1 + (rng() < 0.5 ? 1 : 0));
+        const weakTactics = pick(d.tactics, 1 + (rng() < 0.35 ? 1 : 0));
+        const weakPositional = pick(d.positional, 1);
+
+        // Phase weakness: one phase is noticeably worse
+        const phaseWeights = {};
+        for (const p of d.phases) {
+          phaseWeights[p] = 1.0; // baseline
+        }
+        const worstPhase = pick(d.phases, 1)[0];
+        phaseWeights[worstPhase] = 1.15 + rng() * 0.25; // 1.15-1.40x more errors in weak phase
+
+        // Generate extra error rates for each weakness (how much worse they are)
+        const extraError = {};
+        for (const p of weakPieces)
+          extraError[`piece_${p}`] = 0.04 + rng() * 0.05;
+        for (const e of weakEndgames)
+          extraError[`endgame_${e}`] = 0.05 + rng() * 0.06;
+        for (const t of weakTactics)
+          extraError[`tactic_${t}`] = 0.05 + rng() * 0.05;
+        for (const p of weakPositional)
+          extraError[`positional_${p}`] = 0.03 + rng() * 0.04;
+
+        State.human.weaknesses = {
+          pieces: weakPieces,
+          phases: phaseWeights,
+          endgames: weakEndgames,
+          tactics: weakTactics,
+          positional: weakPositional,
+          extraErrorRate: extraError,
+        };
+
+        // --- Multi-game behavioral consistency (item 5) ---
+        // Generate persistent player tempo and accuracy band from the same seed
+        // These make the account feel like a consistent person across many games
+        State.human.playerTempo = 0.8 + rng() * 0.4; // 0.80-1.20 (fast player vs slow player)
+        State.human.playerAccuracyBand = -0.04 + rng() * 0.08; // -0.04 to +0.04 shift on suboptimal rate
+
+        Utils.log(
+          `WeaknessProfile [seed=${wp.seed}]: pieces=${weakPieces}, phase=${worstPhase}(x${phaseWeights[worstPhase].toFixed(2)}), endgames=${weakEndgames}, tactics=${weakTactics}, positional=${weakPositional}, tempo=${State.human.playerTempo.toFixed(2)}, accuracyBand=${State.human.playerAccuracyBand.toFixed(3)}`,
+          "info",
         );
       },
+
+      // Returns extra suboptimal rate for the current position based on weaknesses
+      getExtraErrorRate: (fen, move) => {
+        const w = State.human.weaknesses;
+        if (!w || !CONFIG.humanization.weaknessProfile.enabled) return 0;
+
+        let extra = 0;
+        const phase = HumanStrategy.getGamePhase(fen);
+
+        // Phase weakness multiplier (applied as a multiplier to total rate externally)
+        // Here we return additive bonus
+        const phaseBonus = (w.phases[phase] || 1.0) - 1.0;
+        extra += phaseBonus * 0.06; // convert multiplier to small additive rate
+
+        // Piece involvement: check if the moving piece matches a weakness
+        if (move && move.length >= 4) {
+          const fromSq = move.substring(0, 2);
+          const movingPiece = WeaknessProfile._identifyPiece(fen, fromSq);
+          if (movingPiece && w.pieces.includes(movingPiece)) {
+            extra += w.extraErrorRate[`piece_${movingPiece}`] || 0;
+          }
+        }
+
+        // Endgame type weakness
+        if (phase === "endgame") {
+          const pieces = Utils.countPieces(fen);
+          const egType = WeaknessProfile._classifyEndgame(fen);
+          if (egType && w.endgames.includes(egType)) {
+            extra += w.extraErrorRate[`endgame_${egType}`] || 0;
+          }
+        }
+
+        return Math.min(extra, 0.15); // cap total extra at 15%
+      },
+
+      _identifyPiece: (fen, sq) => {
+        const board = fen.split(" ")[0];
+        const file = sq.charCodeAt(0) - 97;
+        const rank = parseInt(sq[1]) - 1;
+        const rows = board.split("/").reverse();
+        if (!rows[rank]) return null;
+        let col = 0;
+        for (const ch of rows[rank]) {
+          if (/\d/.test(ch)) {
+            col += parseInt(ch);
+            continue;
+          }
+          if (col === file) {
+            const map = {
+              n: "knight",
+              b: "bishop",
+              r: "rook",
+              q: "queen",
+              k: "king",
+              p: "pawn",
+            };
+            return map[ch.toLowerCase()] || null;
+          }
+          col++;
+        }
+        return null;
+      },
+
+      _classifyEndgame: (fen) => {
+        const board = fen.split(" ")[0].toLowerCase();
+        const hasQ = board.includes("q");
+        const hasR = board.includes("r");
+        const hasB = board.includes("b");
+        const hasN = board.includes("n");
+        if (hasQ && !hasR && !hasB && !hasN) return "queen_endgame";
+        if (hasR && !hasQ && !hasB && !hasN) return "rook_endgame";
+        if (hasB && !hasQ && !hasR && !hasN) return "bishop_endgame";
+        if (hasN && !hasQ && !hasR && !hasB) return "knight_endgame";
+        if (!hasQ && !hasR && !hasB && !hasN) return "pawn_endgame";
+        return null; // mixed — no specific type
+      },
     };
+
     const Utils = {
       log: () => {},
       countPieces: (fen) =>
@@ -4797,12 +5155,24 @@ const DynamicSettingsCore = (() => {
       },
     };
 
+    WeaknessProfile.init();
     RatingProfile.apply(settings.engineUI.strength);
     CONFIG.humanization.enabled = settings.engineUI.humanMode;
     CONFIG.engineUI = settings.engineUI;
     const cached = new Map();
+    const confirmedMoves = new Set();
     function prepare(fen, extra = {}) {
       context = extra;
+      const effective = Number.isFinite(extra.effectiveRating)
+        ? Math.max(400, Math.min(3000, extra.effectiveRating))
+        : settings.engineUI.strength;
+      if (State.engineRuntime.effectiveStrength !== effective) {
+        State.engineRuntime.effectiveStrength = effective;
+        RatingProfile.apply(effective);
+        CONFIG.humanization.enabled = settings.engineUI.humanMode;
+        CONFIG.engineUI = settings.engineUI;
+      }
+      State.human.tiltActive = !!extra.tiltActive;
       State.lastFen = fen;
       State.playerColor = extra.playerColor || fen.split(" ")[1];
       State.moveCount = Math.max(
@@ -4820,11 +5190,11 @@ const DynamicSettingsCore = (() => {
       prepare(fen, extra);
       const calibrated =
         settings.engineUI.humanMode && settings.engineUI.eloCalibration;
-      const cal = HumanCalibration.forRating(settings.engineUI.strength);
+      const cal = HumanCalibration.forRating(ProfileEngine.effectiveStrength());
       let depth = ProfileEngine.depthFor(fen);
       if (!calibrated && settings.engineUI.depthMode === "auto")
         depth = Math.round(
-          RatingProfile.profileFor(settings.engineUI.strength).depth,
+          RatingProfile.profileFor(ProfileEngine.effectiveStrength()).depth,
         );
       return {
         depth,
@@ -4832,7 +5202,7 @@ const DynamicSettingsCore = (() => {
           settings.engineUI.candidateMoves,
           calibrated ? cal.searchMultiPV : 1,
         ),
-        strength: settings.engineUI.strength,
+        strength: ProfileEngine.effectiveStrength(),
       };
     }
     function chooseMoves(fen, moves, extra = {}) {
@@ -4866,9 +5236,10 @@ const DynamicSettingsCore = (() => {
       const best = State.candidates[1].move;
       let choice = cached.get(fen);
       if (!choice) {
-        choice = settings.engineUI.humanMode
-          ? HumanMoveModel.choose(fen, best)
-          : { move: best, isBest: true, reason: "engine", cpLoss: 0 };
+        choice =
+          settings.engineUI.humanMode && !settings.coach.enabled
+            ? HumanMoveModel.choose(fen, best)
+            : { move: best, isBest: true, reason: "engine", cpLoss: 0 };
         cached.set(fen, choice);
         if (cached.size > 64) cached.delete(cached.keys().next().value);
       }
@@ -4901,8 +5272,22 @@ const DynamicSettingsCore = (() => {
           Math.min(budget, Math.max(min, Math.min(max, delay))),
         ),
       };
+      const annotations = settings.annotations;
+      if (
+        annotations.enabled &&
+        choice.delayMs >= annotations.minThinkMs &&
+        choice.annotation === undefined
+      )
+        choice.annotation = Math.random() < annotations.chancePerLongThink;
+      cached.set(fen, choice);
       return {
-        moves: [selected, ...sorted.filter((m) => m !== selected)],
+        moves: [selected, ...sorted.filter((m) => m !== selected)].map(
+          (m, i) => ({
+            ...m,
+            chessinsperAnnotation:
+              !!choice.annotation && i < annotations.maxPerThink,
+          }),
+        ),
         choice,
       };
     }
@@ -4911,14 +5296,57 @@ const DynamicSettingsCore = (() => {
       searchPlan,
       chooseMoves,
       recordMove: (entry) => {
-        if (entry?.move) {
-          HumanMoveModel.recordHistory(entry);
-          if (Number.isFinite(entry.cpLoss))
-            HumanStrategy.recordMoveCPLoss(entry.cpLoss);
-        }
+        if (!entry?.move) return;
+        const key = `${entry.fen}:${entry.move}`;
+        if (confirmedMoves.has(key)) return;
+        confirmedMoves.add(key);
+        if (confirmedMoves.size > 128)
+          confirmedMoves.delete(confirmedMoves.keys().next().value);
+        HumanStrategy.trackMove(entry.isBest ?? entry.cpLoss === 0, entry);
       },
       presets: clone(ProfileEngine.presets),
-      diagnostics: () => clone(State.diagnostics.humanModel),
+      coachReport: (fen, moves) => {
+        const ranked = [...moves].sort(
+          (a, b) => (a.ranking || 1) - (b.ranking || 1),
+        );
+        const best = ranked[0];
+        if (!best) return null;
+        const uci = best.player.join("") + (best.playerPromotion || "");
+        const feature = BoardIntelligence.moveFeatures(fen, uci);
+        const notes = [
+          feature.capture && "captura",
+          feature.type === "k" &&
+            Math.abs(uci.charCodeAt(0) - uci.charCodeAt(2)) === 2 &&
+            "roque",
+          uci.length === 5 && "promoção",
+          feature.development && "desenvolvimento",
+        ].filter(Boolean);
+        return {
+          move: uci,
+          notes,
+          alternatives: settings.coach.showAlternatives
+            ? ranked
+                .slice(1)
+                .filter(
+                  (m) =>
+                    best.mate == null &&
+                    m.mate == null &&
+                    Number.isFinite(m.cp) &&
+                    Math.abs(best.cp - m.cp) <=
+                      settings.coach.altEvalWindow * 100,
+                )
+                .map((m) => m.player.join("") + (m.playerPromotion || ""))
+                .slice(0, 3)
+            : [],
+          threat: settings.coach.showThreats ? best.pv?.[1] || null : null,
+        };
+      },
+      diagnostics: () => ({
+        ...clone(State.diagnostics.humanModel),
+        weaknesses: clone(State.human.weaknesses),
+        effectiveRating: ProfileEngine.effectiveStrength(),
+        tiltActive: State.human.tiltActive,
+      }),
     };
   }
   const api = {
@@ -5007,7 +5435,26 @@ const DynamicSettingsCore = (() => {
       getBoard: () => adapter.getBoard(),
       squareToCoords: (s) => s.charCodeAt(0) - 96 + s[1],
     };
-    const Account = { currentPersona: () => null };
+    const Account = {
+      currentPersona: () =>
+        ({
+          mouse: {
+            jitterScale: 1,
+            clickHoldMs: { min: 50, max: 110 },
+            speedScale: 1,
+          },
+          trackpad: {
+            jitterScale: 1.45,
+            clickHoldMs: { min: 70, max: 150 },
+            speedScale: 0.85,
+          },
+          tablet: {
+            jitterScale: 1.2,
+            clickHoldMs: { min: 90, max: 180 },
+            speedScale: 0.95,
+          },
+        })[adapter.persona?.(active?.profile)] || null,
+    };
     const UI = { toast: () => {} };
     const Utils = {
       randomRange: (a, b) => a + Math.random() * (b - a),
@@ -5821,6 +6268,683 @@ const DynamicSettingsCore = (() => {
   if (typeof module === "object" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
 
+/* Chessinsper session and browser lifecycle policies adapted from Chessrinsper 1.2.1-rc.1 (MIT).
+ * Original author: Chessrinsper. MIT permission notice is in ChessinsperCore.js.
+ * Engines and drawing belong to A.C.A.S.
+ */
+(function (root) {
+  "use strict";
+  const copy = (value) => JSON.parse(JSON.stringify(value));
+  const key = (domain, profile) => `ChessinsperBehavior:${domain}:${profile}`;
+  const number = (value, fallback = 0) =>
+    Number.isFinite(value) ? value : fallback;
+  function create(settings, adapter = {}) {
+    const now = adapter.now || Date.now,
+      random = adapter.random || Math.random;
+    let config = root.ChessinsperCore.normalizeSettings(settings);
+    const restored = adapter.read?.();
+    const fresh = () => ({
+      games: 0,
+      wins: 0,
+      losses: 0,
+      draws: 0,
+      unknown: 0,
+      winStreak: 0,
+    });
+    const state = {
+      version: 1,
+      sessionSerial: 0,
+      session: fresh(),
+      totalGames: 0,
+      results: [],
+      timestamps: [],
+      processed: [],
+      history: [],
+      activeGame: null,
+      nextQueueAt: 0,
+      breakUntil: 0,
+      paused: false,
+      queueAttempts: 0,
+      lastQueueAt: 0,
+      sessionTC: null,
+      tiltGamesLeft: 0,
+      tiltActive: false,
+      persona: null,
+      moveCount: 0,
+      cpLossSum: 0,
+      recoveries: 0,
+      lastRecovery: null,
+      lastAnalysisFen: null,
+      losingPositions: 0,
+      evaluationHistory: [],
+      resignAt: 0,
+      resignDeadline: 0,
+      resignStage: null,
+    };
+    if (restored?.version === 1) {
+      for (const name of Object.keys(state)) {
+        const value = restored[name];
+        if (Array.isArray(state[name]) && Array.isArray(value))
+          state[name] = value.slice(-100);
+        else if (name === "session" && value && typeof value === "object") {
+          for (const field of Object.keys(state.session))
+            state.session[field] = Math.max(0, number(value[field]));
+        } else if (typeof state[name] === "number")
+          state[name] = Math.max(0, number(value));
+        else if (typeof state[name] === "boolean" && typeof value === "boolean")
+          state[name] = value;
+        else if (
+          state[name] === null &&
+          (typeof value === "string" || value === null)
+        )
+          state[name] = value;
+      }
+    }
+    let snapshot = {},
+      serialized = "",
+      lastWriteAt = 0,
+      reason = "Aguardando tabuleiro";
+    const between = (range) => range.min + random() * (range.max - range.min);
+    const persist = () => {
+      const data = { ...copy(state), updatedAt: now(), status: status() };
+      // Persist only when policies or the visible status change, not every heartbeat.
+      const signature = JSON.stringify({ ...data, updatedAt: 0 });
+      if (serialized !== signature || now() - lastWriteAt >= 15000) {
+        serialized = signature;
+        lastWriteAt = now();
+        adapter.write?.(data);
+      }
+    };
+    function resetSession() {
+      state.session = fresh();
+      state.sessionSerial++;
+      state.breakUntil = 0;
+      state.sessionTC = null;
+      state.queueAttempts = 0;
+      state.paused = false;
+      state.nextQueueAt = snapshot.gameOver
+        ? now() + config.session.betweenGamesMs.min
+        : 0;
+      persist();
+    }
+    function beginGame(id) {
+      if (!id || state.activeGame === id) return;
+      state.activeGame = id;
+      state.queueAttempts = 0;
+      state.lastQueueAt = 0;
+      state.nextQueueAt = 0;
+      state.lastAnalysisFen = null;
+      state.losingPositions = 0;
+      state.resignAt = 0;
+      state.resignDeadline = 0;
+      state.resignStage = null;
+      state.tiltActive = config.tilt.enabled && state.tiltGamesLeft > 0;
+      state.tiltGamesLeft = Math.max(0, state.tiltGamesLeft - 1);
+      if (!state.sessionTC && snapshot.timeControl)
+        state.sessionTC = snapshot.timeControl;
+      if (!state.persona)
+        state.persona = ["mouse", "mouse", "mouse", "trackpad", "tablet"][
+          Math.floor(random() * 5)
+        ];
+      persist();
+    }
+    function finishGame(id, result) {
+      if (!id) return false;
+      if (state.processed.includes(id)) {
+        const game = state.history.find((entry) => entry.id === id);
+        if (game?.result !== "?" || !["W", "L", "D"].includes(result))
+          return false;
+        game.result = result;
+        state.results = [...state.results, result].slice(-50);
+        if (game.sessionSerial === state.sessionSerial) {
+          state.session.unknown = Math.max(0, state.session.unknown - 1);
+          state.session[{ W: "wins", L: "losses", D: "draws" }[result]]++;
+          state.session.winStreak =
+            result === "W" ? state.session.winStreak + 1 : 0;
+          if (
+            config.session.enabled &&
+            config.session.maxWinStreak > 0 &&
+            state.session.winStreak >= config.session.maxWinStreak &&
+            !state.breakUntil
+          )
+            state.breakUntil = now() + config.session.breakDurationMs;
+        }
+        if (result === "L" && config.tilt.enabled)
+          state.tiltGamesLeft = config.tilt.durationGames;
+        persist();
+        return true;
+      }
+      state.processed.push(id);
+      state.processed = state.processed.slice(-100);
+      const outcome = ["W", "L", "D"].includes(result) ? result : "?";
+      state.session.games++;
+      state.totalGames++;
+      state.session[
+        { W: "wins", L: "losses", D: "draws", "?": "unknown" }[outcome]
+      ]++;
+      state.session.winStreak =
+        outcome === "W" ? state.session.winStreak + 1 : 0;
+      if (outcome !== "?")
+        state.results = [...state.results, outcome].slice(-50);
+      if (outcome === "L" && config.tilt.enabled)
+        state.tiltGamesLeft = config.tilt.durationGames;
+      state.timestamps = [
+        ...state.timestamps.filter(
+          (t) => Number.isFinite(t) && now() - t < 3600000,
+        ),
+        now(),
+      ];
+      state.history = [
+        ...state.history,
+        { id, result: outcome, at: now(), sessionSerial: state.sessionSerial },
+      ].slice(-50);
+      state.nextQueueAt = now() + between(config.session.betweenGamesMs);
+      if (config.postGame.enabled && random() < config.postGame.reviewChance)
+        state.nextQueueAt += between(config.postGame.reviewDurationMs);
+      if (
+        config.session.enabled &&
+        (state.session.games >= config.session.maxGamesPerSession ||
+          (config.session.maxWinStreak > 0 &&
+            state.session.winStreak >= config.session.maxWinStreak))
+      )
+        state.breakUntil = now() + config.session.breakDurationMs;
+      persist();
+      return true;
+    }
+    function observe(value) {
+      snapshot = value || {};
+      if (state.breakUntil && now() >= state.breakUntil) resetSession();
+      if (!state.sessionTC && snapshot.timeControl)
+        state.sessionTC = snapshot.timeControl;
+      if (state.resignDeadline && now() >= state.resignDeadline) {
+        state.resignAt = 0;
+        state.resignDeadline = 0;
+        state.resignStage = null;
+      }
+      if (snapshot.gameId && snapshot.fen) beginGame(snapshot.gameId);
+      if (snapshot.gameOver && snapshot.gameId)
+        finishGame(snapshot.gameId, snapshot.result);
+      queueDecision();
+      persist();
+      return context();
+    }
+    function canMove() {
+      return (
+        config.enabled &&
+        !state.paused &&
+        !snapshot.gameOver &&
+        !(config.autoResign.enabled && state.resignAt > 0) &&
+        !(config.coach.enabled && config.coach.disableAutoOnEnable)
+      );
+    }
+    function queueDecision() {
+      let waitUntil = state.nextQueueAt;
+      if (!config.enabled) reason = "Chessinsper desligado";
+      else if (state.paused) reason = "Sessão pausada";
+      else if (config.coach.enabled && config.coach.disableAutoOnEnable)
+        reason = "Coach ativo · execução desligada";
+      else if (!config.session.autoQueue) reason = "Fila automática desligada";
+      else if (!snapshot.gameOver || !snapshot.gameId)
+        reason = "Partida em andamento";
+      else if (state.breakUntil > now()) {
+        reason = "Intervalo de sessão";
+        waitUntil = state.breakUntil;
+      } else if (
+        config.tcLock.enabled &&
+        state.sessionTC &&
+        snapshot.timeControl &&
+        state.sessionTC !== snapshot.timeControl
+      )
+        reason = "Ritmo mudou · reinicie a sessão";
+      else {
+        const recent = state.timestamps.filter(
+          (t) => Number.isFinite(t) && now() - t < 3600000,
+        );
+        if (
+          config.session.enabled &&
+          recent.length >= config.session.maxGamesPerHour
+        ) {
+          reason = "Limite de partidas por hora";
+          waitUntil =
+            recent[recent.length - config.session.maxGamesPerHour] + 3600000;
+        } else if (state.queueAttempts >= 3)
+          reason = "Fila não respondeu · retome a sessão";
+        else if (state.lastQueueAt && now() < state.lastQueueAt + 10000) {
+          reason = "Aguardando nova partida";
+          waitUntil = state.lastQueueAt + 10000;
+        } else if (waitUntil > now()) reason = "Pausa entre partidas";
+        else if (!snapshot.queueAvailable)
+          reason = "Aguardando botão de nova partida";
+        else {
+          reason = "Pronto para nova partida";
+          return { allowed: true, waitUntil: 0, reason };
+        }
+      }
+      return { allowed: false, waitUntil: Math.max(0, waitUntil), reason };
+    }
+    function context() {
+      const warmup = config.warmup;
+      const p = Math.min(1, state.totalGames / warmup.durationGames);
+      const smooth = p * p * (3 - 2 * p);
+      const offset =
+        warmup.enabled && !warmup.manualOverride
+          ? warmup.startEloOffset * (1 - smooth)
+          : 0;
+      const recent = state.results.slice(-config.winrateTarget.sampleGames);
+      const winRate = recent.length
+        ? recent.filter((v) => v === "W").length / recent.length
+        : null;
+      const balance =
+        config.winrateTarget.enabled &&
+        recent.length >= config.winrateTarget.sampleGames &&
+        winRate > config.winrateTarget.target
+          ? Math.min(
+              200,
+              (winRate - config.winrateTarget.target) *
+                config.winrateTarget.overshootBoost *
+                1000,
+            )
+          : 0;
+      let effective = config.engineUI.strength + offset - balance;
+      if (
+        config.opponentAdaptation.enabled &&
+        Number.isFinite(snapshot.opponentRating) &&
+        offset === 0
+      )
+        effective =
+          snapshot.opponentRating + config.opponentAdaptation.ratingEdge;
+      return {
+        effectiveRating: Math.round(Math.max(400, Math.min(3000, effective))),
+        tiltActive: state.tiltActive && config.tilt.enabled,
+        hardwarePersona: config.hardwarePersona.enabled ? state.persona : null,
+        sessionGames: state.session.games,
+        totalGames: state.totalGames,
+        winRate,
+      };
+    }
+    function status() {
+      const decision = queueDecision();
+      return {
+        ...context(),
+        ...copy(state.session),
+        reason,
+        paused: state.paused,
+        waitUntil: decision.waitUntil,
+        queueAttempts: state.queueAttempts,
+        moves: state.moveCount,
+        averageCPLoss: state.moveCount
+          ? Math.round(state.cpLossSum / state.moveCount)
+          : 0,
+        recoveries: state.recoveries,
+        lastRecovery: state.lastRecovery,
+        resignAt: state.resignAt,
+        resignStage: state.resignStage,
+        lastEval: state.evaluationHistory.at(-1)?.cp ?? null,
+      };
+    }
+    return {
+      observe,
+      context,
+      status,
+      canMove,
+      queueDecision,
+      resetSession,
+      configure(value) {
+        config = root.ChessinsperCore.normalizeSettings(value);
+      },
+      pause(value) {
+        state.paused = !!value;
+        if (!value) {
+          state.queueAttempts = 0;
+          state.lastQueueAt = 0;
+        }
+        persist();
+      },
+      queueAttempt() {
+        state.queueAttempts++;
+        state.lastQueueAt = now();
+        persist();
+      },
+      recover(source) {
+        state.recoveries++;
+        state.lastRecovery = source;
+        persist();
+      },
+      recordMove(entry) {
+        const id = `move:${state.activeGame}:${entry.fen}:${entry.move}`;
+        if (state.processed.includes(id)) return;
+        state.processed = [...state.processed, id].slice(-100);
+        state.moveCount++;
+        state.cpLossSum += Math.max(0, number(entry.cpLoss));
+        persist();
+      },
+      recordAnalysis(packet) {
+        if (!packet.fen || packet.fen === state.lastAnalysisFen) return;
+        state.lastAnalysisFen = packet.fen;
+        if (Number.isFinite(packet.bestCp))
+          state.evaluationHistory = [
+            ...state.evaluationHistory,
+            { fen: packet.fen, cp: packet.bestCp, at: now() },
+          ].slice(-100);
+        const ar = config.autoResign;
+        const lost =
+          (Number.isFinite(packet.bestCp) &&
+            packet.bestCp <= ar.evalThreshold * 100) ||
+          (Number.isFinite(packet.bestMate) && packet.bestMate < 0);
+        state.losingPositions = lost ? state.losingPositions + 1 : 0;
+        if (!lost) {
+          state.resignAt = 0;
+          state.resignDeadline = 0;
+          state.resignStage = null;
+        }
+        if (
+          ar.enabled &&
+          !state.resignAt &&
+          state.losingPositions >= ar.consecutiveMoves &&
+          Number(packet.fen.split(" ")[5]) >= ar.minMoveNumber &&
+          random() < ar.resignChance
+        ) {
+          state.resignAt = now() + between(ar.delay);
+          state.resignDeadline = state.resignAt + 10000;
+        }
+        persist();
+      },
+      canResign() {
+        return (
+          config.enabled &&
+          config.autoResign.enabled &&
+          !state.paused &&
+          !snapshot.gameOver &&
+          !(config.coach.enabled && config.coach.disableAutoOnEnable) &&
+          state.resignAt > 0 &&
+          now() >= state.resignAt &&
+          state.resignStage !== "sent"
+        );
+      },
+      resignAttempt(confirmed) {
+        state.resignStage = confirmed ? "sent" : "confirm";
+        state.resignAt = now() + 1500;
+        persist();
+      },
+      checkpoint: () => {
+        persist();
+        return copy(state);
+      },
+    };
+  }
+
+  function createSupervisor(adapter, environment = root) {
+    let interval = null,
+      worker = null,
+      workerURL = null,
+      lastTick = 0,
+      active = false,
+      busy = false,
+      workerRestartAt = 0,
+      rtcGeneration = 0,
+      rtcStarting = false,
+      peers = [],
+      channel = null,
+      rtcTimer = null,
+      rtcTimeout = null,
+      rtcFinish = null;
+    const document = environment.document;
+    const events = ["focus", "pageshow", "online", "visibilitychange"];
+    function recover(source) {
+      adapter.cancel?.();
+      adapter.recover?.(source);
+    }
+    async function tick(source) {
+      if (!active || busy) return;
+      const time = Date.now();
+      if (lastTick && time - lastTick > 15000)
+        recover("retorno após suspensão");
+      lastTick = time;
+      if (!worker && time >= workerRestartAt) startWorker();
+      busy = true;
+      try {
+        await adapter.tick?.(source);
+      } catch (error) {
+        adapter.error?.(error);
+      } finally {
+        busy = false;
+      }
+    }
+    function wake(event) {
+      if (!active) return;
+      recover(event.type);
+      void tick(event.type);
+    }
+    function freeze() {
+      adapter.cancel?.();
+      adapter.checkpoint?.();
+    }
+    function disposeWorker() {
+      worker?.terminate();
+      worker = null;
+      if (workerURL) environment.URL.revokeObjectURL(workerURL);
+      workerURL = null;
+    }
+    function startWorker() {
+      if (!active || worker) return;
+      try {
+        workerURL = environment.URL.createObjectURL(
+          new environment.Blob(
+            ["setInterval(()=>postMessage(Date.now()),1000)"],
+            { type: "text/javascript" },
+          ),
+        );
+        worker = new environment.Worker(workerURL);
+        worker.onmessage = () => void tick("worker");
+        worker.onerror = () => {
+          disposeWorker();
+          workerRestartAt = Date.now() + 30000;
+        };
+      } catch {
+        disposeWorker();
+        workerRestartAt = Date.now() + 60000;
+      }
+    }
+    function closeRTC() {
+      rtcGeneration++;
+      rtcStarting = false;
+      rtcFinish?.(false);
+      rtcFinish = null;
+      if (rtcTimeout) environment.clearTimeout(rtcTimeout);
+      rtcTimeout = null;
+      if (rtcTimer) environment.clearInterval(rtcTimer);
+      rtcTimer = null;
+      channel?.close();
+      channel = null;
+      peers.forEach((peer) => peer.close());
+      peers = [];
+    }
+    async function startRTC() {
+      if (
+        !active ||
+        rtcStarting ||
+        peers.length ||
+        !environment.RTCPeerConnection
+      )
+        return;
+      rtcStarting = true;
+      const generation = rtcGeneration;
+      let timeout;
+      try {
+        const a = new environment.RTCPeerConnection({ iceServers: [] });
+        const b = new environment.RTCPeerConnection({ iceServers: [] });
+        peers = [a, b];
+        const forA = [],
+          forB = [];
+        a.onicecandidate = (e) => {
+          if (e.candidate) {
+            if (b.remoteDescription)
+              b.addIceCandidate(e.candidate).catch(() => {});
+            else forB.push(e.candidate);
+          }
+        };
+        b.onicecandidate = (e) => {
+          if (e.candidate) {
+            if (a.remoteDescription)
+              a.addIceCandidate(e.candidate).catch(() => {});
+            else forA.push(e.candidate);
+          }
+        };
+        b.ondatachannel = (e) => {
+          e.channel.onmessage = () => void tick("rtc");
+        };
+        channel = a.createDataChannel("chessinsper-local", {
+          ordered: false,
+          maxRetransmits: 0,
+        });
+        const connected = new Promise((resolve) => {
+          rtcFinish = resolve;
+          channel.onopen = () => resolve(true);
+          timeout = rtcTimeout = environment.setTimeout(
+            () => resolve(false),
+            8000,
+          );
+        });
+        await a.setLocalDescription(await a.createOffer());
+        await b.setRemoteDescription(a.localDescription);
+        await Promise.all(
+          forB.map((candidate) => b.addIceCandidate(candidate).catch(() => {})),
+        );
+        await b.setLocalDescription(await b.createAnswer());
+        await a.setRemoteDescription(b.localDescription);
+        await Promise.all(
+          forA.map((candidate) => a.addIceCandidate(candidate).catch(() => {})),
+        );
+        const opened = await connected;
+        if (!opened) {
+          if (generation === rtcGeneration) closeRTC();
+          return;
+        }
+        if (!active || generation !== rtcGeneration) return;
+        rtcTimer = environment.setInterval(() => {
+          if (channel?.readyState === "open") channel.send("tick");
+        }, 15000);
+      } catch {
+        if (generation === rtcGeneration) closeRTC();
+      } finally {
+        environment.clearTimeout(timeout);
+        if (generation === rtcGeneration) {
+          rtcStarting = false;
+          rtcTimeout = null;
+          rtcFinish = null;
+        }
+      }
+    }
+    return {
+      start(options = {}) {
+        if (active) {
+          if (options.localKeepAlive) void startRTC();
+          else if (peers.length) closeRTC();
+          return;
+        }
+        active = true;
+        lastTick = Date.now();
+        startWorker();
+        interval = environment.setInterval(() => void tick("interval"), 5000);
+        events.forEach((event) =>
+          environment.addEventListener(event, wake, true),
+        );
+        document?.addEventListener("freeze", freeze, true);
+        document?.addEventListener("resume", wake, true);
+        environment.addEventListener("pagehide", freeze, true);
+        if (options.localKeepAlive) void startRTC();
+        if (document?.wasDiscarded) recover("aba restaurada");
+        void tick("start");
+      },
+      stop() {
+        active = false;
+        environment.clearInterval(interval);
+        interval = null;
+        disposeWorker();
+        closeRTC();
+        adapter.cancel?.();
+        adapter.checkpoint?.();
+        events.forEach((event) =>
+          environment.removeEventListener(event, wake, true),
+        );
+        document?.removeEventListener("freeze", freeze, true);
+        document?.removeEventListener("resume", wake, true);
+        environment.removeEventListener("pagehide", freeze, true);
+      },
+      tick,
+      isActive: () => active,
+    };
+  }
+  const visible = (element) =>
+    !!element &&
+    element.isConnected &&
+    element.getClientRects().length > 0 &&
+    root.getComputedStyle(element).visibility !== "hidden";
+  function readPage(document, playerColor) {
+    const modal = [
+      ...document.querySelectorAll(
+        '[data-cy="game-over-modal"], .game-over-modal, .game-over-component, .game-over-dialog, .game-over-modal-component, .result-wrap',
+      ),
+    ].find(visible);
+    const ended =
+      modal ||
+      [
+        ...document.querySelectorAll(
+          ".game-header-component, .game-header-title, .game__meta .status",
+        ),
+      ].find(
+        (e) =>
+          visible(e) &&
+          /checkmate|xeque.?mate|resigned|abandonou|draw|empate|wins|venceu|time.?out|tempo esgotado/i.test(
+            e.textContent,
+          ),
+      );
+    const text = ended?.textContent || "";
+    let result = /you won|você venceu|voce venceu|vitória|victory/i.test(text)
+      ? "W"
+      : /you lost|você perdeu|voce perdeu|derrota/i.test(text)
+        ? "L"
+        : /\b(draw|empate|stalemate|agreement|repetition)\b/i.test(text)
+          ? "D"
+          : null;
+    const score = text.match(
+      /\b(1\s*[-–]\s*0|0\s*[-–]\s*1|½\s*[-–]\s*½|1\/2\s*[-–]\s*1\/2)\b/,
+    );
+    if (score)
+      result = /½|1\/2/.test(score[1])
+        ? "D"
+        : (score[1].startsWith("1") ? "w" : "b") === playerColor
+          ? "W"
+          : "L";
+    if (!result && /white (wins|won)|brancas venceram/i.test(text))
+      result = playerColor === "w" ? "W" : "L";
+    if (!result && /black (wins|won)|pretas venceram/i.test(text))
+      result = playerColor === "b" ? "W" : "L";
+    let queueButton = [
+      ...document.querySelectorAll(
+        '[data-cy="new-game-button"], [data-cy="game-over-new-game"], .game-over-modal .new-game-button, .game-over-component .new-game-button, .follow-up .button[href="/"], .follow-up .rematch',
+      ),
+    ].find(visible);
+    if (!queueButton && modal)
+      queueButton = [...modal.querySelectorAll("button, a")].find(
+        (e) =>
+          visible(e) &&
+          /^(new (\d+\s*(min|minute)\s*)?game|play again|nova partida|jogar novamente|rematch|revanche)$/i.test(
+            e.textContent.trim(),
+          ),
+      );
+    if (
+      queueButton?.disabled ||
+      queueButton?.getAttribute("aria-disabled") === "true"
+    )
+      queueButton = null;
+    return { gameOver: !!ended, result, queueButton };
+  }
+  const api = { create, createSupervisor, readPage, key };
+  root.ChessinsperBehavior = api;
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+})(typeof globalThis !== "undefined" ? globalThis : this);
+
 // END CHESSINSPER BUNDLE
 (async () => { try { await LOAD_LEGACY_GM_SUPPORT();
 /*
@@ -6297,6 +7421,170 @@ CommLink.registerSendCommand('toggleConcealAssistance');
 
 CommLink.registerSendCommand('chessinsperMoveConfirmed');
 
+const chessinsperBehaviors = new Map();
+let chessinsperActiveProfile = null, chessinsperLeaseSince = 0, chessinsperLastTick = 0;
+const chessinsperMatchKey = `ChessinsperMatch:${domain}:${location.pathname}`;
+function chessinsperMatch(newMatch = false) {
+    const fen = getFen(), route = location.pathname;
+    let match = GM_getValue(chessinsperMatchKey);
+    const routeId = route.match(/\/game\/(?:live|daily)\/(\d+)/)?.[1]
+        || (/lichess\.org$/.test(domain) ? route.match(/^\/([a-zA-Z0-9]{8,12})(?:\/|$)/)?.[1] : null);
+    const reset = newMatch && match?.fen && fen && match.fen.split(' ').slice(0,2).join(' ') !== fen.split(' ').slice(0,2).join(' ')
+        && (match.ended || defaultPosBasicFens.includes(fen.split(' ')[0]));
+    if(!match || match.route !== route || reset) {
+        match = { id: routeId ? `${domain}:${routeId}` : `${domain}:${Date.now()}:${getUniqueID()}`, route, fen, ended: false };
+        GM_setValue(chessinsperMatchKey, match);
+    }
+    return match;
+}
+function chessinsperBehavior(profile) {
+    const settings = ChessinsperCore.normalizeSettings(getConfigValue(configKeys.chessinsper, profile));
+    let entry = chessinsperBehaviors.get(profile);
+    if(!entry) {
+        const key = ChessinsperBehavior.key(domain, profile);
+        entry = { key, settings, controller: ChessinsperBehavior.create(settings, {
+            read: () => GM_getValue(key), write: state => {
+                if(GM_getValue(key + ':owner')?.id === commLinkInstanceID) GM_setValue(key, state);
+            }
+        }), lastCommand: null, lastFen: null, fenSince: Date.now(), lastIdleAt: 0 };
+        chessinsperBehaviors.set(profile, entry);
+    }
+    const wasAllowed = entry.controller.canMove();
+    entry.settings = settings;
+    entry.controller.configure(settings);
+    const autoMove = !!getConfigValue(configKeys.autoMove, profile);
+    if((!wasAllowed && entry.controller.canMove()) || autoMove && !entry.autoMove) entry.needsAnalysis = true;
+    entry.autoMove = autoMove;
+    return entry;
+}
+function chessinsperOwnsTab(profile) {
+    if(profile !== chessinsperActiveProfile) return false;
+    const key = ChessinsperBehavior.key(domain, profile) + ':owner';
+    const time = Date.now(), owner = GM_getValue(key);
+    if(owner?.id !== commLinkInstanceID && owner?.until > time) return false;
+    if(owner?.id !== commLinkInstanceID) {
+        chessinsperLeaseSince = time;
+        const entry = chessinsperBehaviors.get(profile);
+        if(entry) {
+            entry.controller = ChessinsperBehavior.create(entry.settings, {
+                read: () => GM_getValue(entry.key), write: state => {
+                    if(GM_getValue(entry.key + ':owner')?.id === commLinkInstanceID) GM_setValue(entry.key, state);
+                }
+            });
+            entry.needsAnalysis = true;
+        }
+    }
+    GM_setValue(key, { id: commLinkInstanceID, until: time + 10000 });
+    return time - chessinsperLeaseSince >= 1000 && GM_getValue(key)?.id === commLinkInstanceID;
+}
+function chessinsperReleaseTab(profile) {
+    if(!profile) return;
+    const key = ChessinsperBehavior.key(domain, profile) + ':owner';
+    if(GM_getValue(key)?.id === commLinkInstanceID) GM_deleteValue(key);
+}
+function chessinsperSnapshot() {
+    const base = getChessinsperContext(), page = ChessinsperBehavior.readPage(document, base.playerColor);
+    const match = chessinsperMatch();
+    const fen = getFen();
+    if(fen && (match.fen !== fen || match.ended !== page.gameOver)) GM_setValue(chessinsperMatchKey, { ...match, fen, ended: page.gameOver });
+    return { ...base, ...page, fen, gameId: match.id, queueAvailable: !!page.queueButton };
+}
+function chessinsperTick() {
+    const time = Date.now();
+    if(time - chessinsperLastTick < 750 || !chessinsperActiveProfile) return;
+    chessinsperLastTick = time;
+    const entry = chessinsperBehavior(chessinsperActiveProfile);
+    const ownsTab = chessinsperOwnsTab(chessinsperActiveProfile);
+    if(!entry.settings.enabled || !ownsTab) return;
+    const c = entry.controller;
+    const command = GM_getValue(entry.key + ':command');
+    if(command?.id && command.id !== entry.lastCommand) {
+        entry.lastCommand = command.id;
+        if(command.type === 'reset') c.resetSession();
+        if(command.type === 'pause') { c.pause(true); chessinsperInput.cancel(); }
+        if(command.type === 'resume') { c.pause(false); entry.needsAnalysis = true; }
+        GM_deleteValue(entry.key + ':command');
+    }
+    const snapshot = chessinsperSnapshot();
+    const wasAllowed = c.canMove();
+    c.observe(snapshot);
+    if(!wasAllowed && c.canMove()) entry.needsAnalysis = true;
+    if(entry.needsAnalysis && snapshot.fen && !snapshot.gameOver && !chessinsperInput.isActive()) {
+        entry.needsAnalysis = false;
+        CommLink.commands.calculateBestMoves(snapshot.fen);
+    }
+    if(!c.canMove()) chessinsperInput.cancel();
+    if(c.canResign() && getConfigValue(configKeys.autoMove, chessinsperActiveProfile) && !chessinsperInput.isActive()) {
+        const confirming = c.status().resignStage === 'confirm';
+        const selector = confirming ? 'button[data-cy="confirm-resign"], button[data-cy="resign-confirmation"], [data-cy="resign-confirmation"] button, .resign-confirmation button, button.confirm-resign' : '[data-cy="resign-button"], button.resign-button, .resign-button-component button, button.resign-button-component, button.resign, .board-controls-btn-resign';
+        const button = [...document.querySelectorAll(selector)].find(e => e.isConnected && e.getClientRects().length && !e.disabled && getComputedStyle(e).visibility !== 'hidden'
+            && (!confirming || /^(resign|abandonar|desistir|yes(?:,?\s*resign)?|sim(?:,?\s*abandonar)?|confirm(?:ar)?)[.!]?$/i.test((e.textContent || e.getAttribute('aria-label') || '').trim())));
+        if(button && !ChessinsperBehavior.readPage(document, snapshot.playerColor).gameOver && chessinsperOwnsTab(chessinsperActiveProfile)) {
+            c.resignAttempt(confirming); button.click();
+        }
+    }
+    if(c.queueDecision().allowed && getConfigValue(configKeys.autoMove, chessinsperActiveProfile) && !chessinsperInput.isActive()) {
+        // Re-read both the live settings and the DOM immediately before the one click.
+        const live = ChessinsperCore.normalizeSettings(getConfigValue(configKeys.chessinsper, chessinsperActiveProfile));
+        const page = ChessinsperBehavior.readPage(document, snapshot.playerColor);
+        if(live.enabled && live.session.autoQueue && page.gameOver && page.queueButton && chessinsperOwnsTab(chessinsperActiveProfile)) {
+            c.queueAttempt(); page.queueButton.click();
+        }
+    }
+    if(entry.lastFen !== snapshot.fen) { entry.lastFen = snapshot.fen; entry.fenSince = time; }
+    const idle = entry.settings.idleMouse;
+    if(idle.enabled && c.canMove() && !chessinsperInput.isActive() && getConfigValue(configKeys.autoMove, chessinsperActiveProfile)
+       && time - entry.fenSince >= idle.triggerAfterMs && time - entry.lastIdleAt >= 1200 && Math.random() < idle.actionChance) {
+        entry.lastIdleAt = time;
+        const board = getBoardElem(), rect = board?.getBoundingClientRect();
+        if(rect?.width && rect.height) board.dispatchEvent(new MouseEvent('mousemove', {
+            bubbles: true, clientX: rect.left + rect.width * (0.15 + Math.random() * 0.7),
+            clientY: rect.top + rect.height * (0.15 + Math.random() * 0.7), buttons: 0
+        }));
+    }
+}
+const chessinsperSupervisor = ChessinsperBehavior.createSupervisor({
+    tick: chessinsperTick,
+    cancel: () => chessinsperInput.cancel(),
+    checkpoint: () => chessinsperBehaviors.forEach(entry => entry.controller.checkpoint()),
+    recover: source => {
+        const entry = chessinsperBehaviors.get(chessinsperActiveProfile);
+        if(!entry || !entry.settings.enabled || !chessinsperOwnsTab(chessinsperActiveProfile)) return;
+        entry.controller.recover(source);
+        if(entry.controller.canMove()) {
+            chessinsperInput.reset();
+            CommLink.commands.updateBoardFen();
+            CommLink.commands.calculateBestMoves(getFen());
+        }
+    },
+    error: error => { if(debugModeActivated) console.warn('Chessinsper AFK', error); }
+});
+function syncChessinsperBehaviors(names, config) {
+    const enabled = [...names].filter(name => ChessinsperCore.normalizeSettings(getConfigValue(configKeys.chessinsper, name)).enabled);
+    const preferred = config?.global?.chessEngineProfile;
+    const next = enabled.includes(preferred) && getConfigValue(configKeys.autoMove, preferred) ? preferred
+        : enabled.find(name => getConfigValue(configKeys.autoMove, name)) || enabled[0] || null;
+    if(next !== chessinsperActiveProfile) {
+        const previous = chessinsperBehaviors.get(chessinsperActiveProfile);
+        if(previous && chessinsperOwnsTab(chessinsperActiveProfile)) {
+            previous.controller.configure(ChessinsperCore.normalizeSettings(getConfigValue(configKeys.chessinsper, chessinsperActiveProfile)));
+            previous.controller.checkpoint();
+        }
+        chessinsperInput.cancel(); chessinsperReleaseTab(chessinsperActiveProfile);
+        chessinsperActiveProfile = next; chessinsperLeaseSince = Date.now();
+    }
+    chessinsperBehaviors.forEach((entry, profile) => {
+        if(!enabled.includes(profile)) entry.controller.configure({ ...entry.settings, enabled: false });
+    });
+    const entry = next ? chessinsperBehavior(next) : null;
+    if(entry?.settings.afk.enabled) chessinsperSupervisor.start(entry.settings.afk);
+    else if(chessinsperSupervisor.isActive()) chessinsperSupervisor.stop();
+    chessinsperTick();
+}
+window.addEventListener('pagehide', () => {
+    chessinsperSupervisor.stop(); chessinsperReleaseTab(chessinsperActiveProfile);
+});
+
 const chessinsperFirstPositions = new Map();
 const chessinsperInput = ChessinsperAutomation.create({
     getBoard: getBoardElem,
@@ -6305,11 +7593,17 @@ const chessinsperInput = ChessinsperAutomation.create({
     enabled: (profile, plannedSettings) => {
         const current = ChessinsperCore.normalizeSettings(getConfigValue(configKeys.chessinsper, profile));
         return !!getConfigValue(configKeys.autoMove, profile) && current.enabled
+            && chessinsperOwnsTab(profile) && chessinsperBehavior(profile).controller.canMove()
+            && !ChessinsperBehavior.readPage(document, getBoardOrientation()).gameOver
             && (!plannedSettings || ChessinsperCore.behaviorSignature(current) === ChessinsperCore.behaviorSignature(plannedSettings));
     },
-    onConfirmed: packet => CommLink.commands.chessinsperMoveConfirmed({
-        profile: packet.profile, move: packet.move, fen: packet.fen, cpLoss: packet.cpLoss, role: 'own'
-    })
+    persona: profile => chessinsperBehavior(profile).controller.context().hardwarePersona,
+    onConfirmed: packet => {
+        chessinsperBehavior(packet.profile).controller.recordMove(packet);
+        CommLink.commands.chessinsperMoveConfirmed({
+            profile: packet.profile, move: packet.move, fen: packet.fen, cpLoss: packet.cpLoss, isBest: packet.isBest, role: 'own'
+        });
+    }
 });
 
 CommLink.registerListener(`backend_${commLinkInstanceID}`, packet => {
@@ -6319,9 +7613,18 @@ CommLink.registerListener(`backend_${commLinkInstanceID}`, packet => {
                 return `pong (took ${Date.now() - packet.date}ms)`;
             case 'getFen':
                 return getFen();
-            case 'chessinsperContext':
-                return getChessinsperContext();
-            case 'chessinsperMove':
+            case 'chessinsperContext': {
+                const profile = packet.data?.profile || chessinsperActiveProfile;
+                const entry = profile ? chessinsperBehavior(profile) : null;
+                if(entry && chessinsperOwnsTab(profile)) entry.controller.observe(chessinsperSnapshot());
+                return { ...getChessinsperContext(), ...(entry?.controller.context() || {}) };
+            }
+            case 'chessinsperMove': {
+                if(!packet.data?.profile || !chessinsperOwnsTab(packet.data.profile)) return false;
+                const entry = chessinsperBehavior(packet.data.profile);
+                entry.controller.observe(chessinsperSnapshot());
+                entry.controller.recordAnalysis(packet.data);
+                if(!entry.controller.canMove()) return true;
                 if(getConfigValue(configKeys.autoMoveAfterUser, packet.data?.profile)) {
                     const first = chessinsperFirstPositions.get(packet.data.profile);
                     const position = packet.data.fen?.split(' ').slice(0, 2).join(' ');
@@ -6332,6 +7635,7 @@ CommLink.registerListener(`backend_${commLinkInstanceID}`, packet => {
                     if(debugModeActivated) console.debug('Chessinsper input', result);
                 });
                 return true;
+            }
             case 'updateDynamicContext':
                 if(!packet.data || typeof packet.data !== 'object' || Array.isArray(packet.data)) return false;
                 if(packet.data.fen && packet.data.fen !== gameState?.fen?.full) return false;
@@ -6519,7 +7823,9 @@ function getChessinsperContext() {
     const match = text.match(/^(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)$/);
     const clockSeconds = match ? Number(match[1] || 0)*3600 + Number(match[2])*60 + Number(match[3]) : null;
     const timeControl = document.querySelector('[data-cy="time-control"], .time-control, .game-controls-clock')?.textContent?.trim() || null;
-    return { clockSeconds, timeControl, playerColor: getBoardOrientation() };
+    const ratingText = document.querySelector('.player-top .user-tagline-rating, .player-top [data-cy="user-rating"], .player-top .rating, .ruser-top .rating')?.textContent || '';
+    const ratingMatch = ratingText.match(/\b(\d{3,4})\b/);
+    return { clockSeconds, timeControl, playerColor: getBoardOrientation(), opponentRating: ratingMatch ? Number(ratingMatch[1]) : null };
 }
 
 
@@ -8599,6 +9905,8 @@ async function processBoardPosition() {
         matchFirstSuggestionGiven = false;
         chessinsperInput.reset();
         chessinsperFirstPositions.clear();
+        chessinsperMatch(true);
+        chessinsperBehaviors.forEach(entry => { entry.lastFen = null; });
         gameState.turn = getBoardOrientation();
         instanceVars.turn.set(commLinkInstanceID, gameState.turn);
 
@@ -9682,6 +10990,7 @@ function refreshSettings() {
             ...Object.keys(globalProfiles && typeof globalProfiles === 'object' && !Array.isArray(globalProfiles) ? globalProfiles : {}),
             ...Object.keys(instanceProfiles && typeof instanceProfiles === 'object' && !Array.isArray(instanceProfiles) ? instanceProfiles : {})
         ]);
+        syncChessinsperBehaviors(names, config);
         isMovesOnDemandActive = [...names].some(profileName =>
             getGmConfigValue(configKeys.movesOnDemand, commLinkInstanceID, profileName) === true);
         return true;

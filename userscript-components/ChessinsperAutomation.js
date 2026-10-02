@@ -69,7 +69,26 @@
       getBoard: () => adapter.getBoard(),
       squareToCoords: (s) => s.charCodeAt(0) - 96 + s[1],
     };
-    const Account = { currentPersona: () => null };
+    const Account = {
+      currentPersona: () =>
+        ({
+          mouse: {
+            jitterScale: 1,
+            clickHoldMs: { min: 50, max: 110 },
+            speedScale: 1,
+          },
+          trackpad: {
+            jitterScale: 1.45,
+            clickHoldMs: { min: 70, max: 150 },
+            speedScale: 0.85,
+          },
+          tablet: {
+            jitterScale: 1.2,
+            clickHoldMs: { min: 90, max: 180 },
+            speedScale: 0.95,
+          },
+        })[adapter.persona?.(active?.profile)] || null,
+    };
     const UI = { toast: () => {} };
     const Utils = {
       randomRange: (a, b) => a + Math.random() * (b - a),

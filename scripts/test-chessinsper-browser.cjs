@@ -451,6 +451,145 @@ const passed = [];
     passed.push(
       "Compiled userscript receives native A.C.A.S arrow shapes across two local tabs",
     );
+    // The real frontend observes a local end-of-game fixture and obeys profile commands.
+    await page.getByText("Sessões, fila e AFK", { exact: true }).click();
+    const behaviorProfile = await page.evaluate(() =>
+      GET_PROFILE_STORAGE_KEY(SETTING_FILTER_OBJ.profileID),
+    );
+    await frontend.evaluate((profile) => {
+      window.__queueClicks = 0;
+      const modal = document.createElement("div");
+      modal.dataset.cy = "game-over-modal";
+      modal.style.cssText =
+        "position:fixed;left:0;top:0;z-index:2147483647;background:white;color:black;padding:20px";
+      modal.textContent = "You won ";
+      const button = document.createElement("button");
+      button.dataset.cy = "new-game-button";
+      button.textContent = "New game";
+      button.onclick = () => window.__queueClicks++;
+      modal.append(button);
+      document.body.append(modal);
+      const config = GM_getValue("AcasConfig");
+      const settings = ChessinsperCore.normalizeSettings(
+        config.global.profiles[profile].chessinsper,
+      );
+      settings.session.autoQueue = true;
+      settings.session.betweenGamesMs = { min: 10000, max: 10000 };
+      settings.postGame.enabled = false;
+      settings.coach.enabled = false;
+      config.global.profiles[profile].autoMove = true;
+      config.global.profiles[profile].chessinsper = JSON.stringify(settings);
+      GM_setValue("AcasConfig", config);
+    }, behaviorProfile);
+    await frontend.waitForFunction((profile) => {
+      const key = GM_listValues().find(
+        (k) =>
+          k.startsWith("ChessinsperBehavior:") && k.endsWith(":" + profile),
+      );
+      const value = key && GM_getValue(key);
+      return value?.status?.wins === 1 && value?.status?.queueAttempts === 0;
+    }, behaviorProfile);
+    const behaviorKey = await frontend.evaluate(
+      (profile) =>
+        GM_listValues().find(
+          (k) =>
+            k.startsWith("ChessinsperBehavior:") && k.endsWith(":" + profile),
+        ),
+      behaviorProfile,
+    );
+    await page.waitForFunction(() =>
+      document
+        .querySelector("#chessinsper-session-status")
+        ?.textContent.includes("1 vitórias"),
+    );
+    await page
+      .getByRole("button", { name: "Pausar sessão", exact: true })
+      .click();
+    await frontend.waitForFunction(
+      (key) => GM_getValue(key)?.status?.paused === true,
+      behaviorKey,
+    );
+    assert.equal(await frontend.evaluate(() => __queueClicks), 0);
+    await page
+      .getByRole("button", { name: "Retomar sessão", exact: true })
+      .click();
+    await frontend.waitForFunction(() => __queueClicks === 1);
+    assert.equal(
+      await frontend.evaluate(
+        (key) => GM_getValue(key)?.status?.games,
+        behaviorKey,
+      ),
+      1,
+    );
+    passed.push(
+      "Compiled frontend tracks a result once, displays session stats, pauses and resumes the automatic queue",
+    );
+    await frontend.evaluate(() => window.dispatchEvent(new Event("pageshow")));
+    await frontend.waitForFunction(
+      (key) => GM_getValue(key)?.status?.lastRecovery === "pageshow",
+      behaviorKey,
+    );
+    assert.ok(
+      await frontend.evaluate(() =>
+        __testWorkers.some((url) => url.startsWith("blob:")),
+      ),
+    );
+    passed.push(
+      "AFK worker and browser wake events restore the saved session without duplicating a result",
+    );
+    const firstOwner = await frontend.evaluate(
+      (key) => GM_getValue(key + ":owner")?.id,
+      behaviorKey,
+    );
+    const standby = await context.newPage();
+    await standby.goto(base + "app/dev/", { waitUntil: "load" });
+    await standby.getByRole("button", { name: /Free Move/ }).click();
+    await standby.waitForTimeout(2000);
+    assert.equal(
+      await standby.evaluate(
+        (key) => GM_getValue(key + ":owner")?.id,
+        behaviorKey,
+      ),
+      firstOwner,
+    );
+    assert.equal(
+      await standby.evaluate(
+        (key) => GM_getValue(key)?.status?.games,
+        behaviorKey,
+      ),
+      1,
+    );
+    await frontend.evaluate(key => {
+      const value = GM_getValue(key); value.checkpointMarker = 'active-tab-update'; GM_setValue(key,value);
+    }, behaviorKey);
+    await standby.close();
+    assert.equal(await frontend.evaluate(key => GM_getValue(key)?.checkpointMarker, behaviorKey), 'active-tab-update');
+    passed.push(
+      "A second game tab cannot take over the active session or overwrite its results",
+    );
+    await page.evaluate(async () => {
+      const { loopThroughAndUpdateSettingsValues } = await import(
+        "./assets/js/gui/settings.js"
+      );
+      await loopThroughAndUpdateSettingsValues(false);
+    });
+    await page.locator("#chessinsper-activate").click();
+    await frontend.waitForFunction(
+      (key) => GM_getValue(key)?.status?.reason === "Chessinsper desligado",
+      behaviorKey,
+    );
+    await frontend.waitForTimeout(2000);
+    assert.equal(await frontend.evaluate(() => __queueClicks), 1);
+    assert.equal(
+      await frontend.evaluate(
+        (key) => GM_getValue(key + ":owner"),
+        behaviorKey,
+      ),
+      undefined,
+    );
+    passed.push(
+      "Floating master switch stops the queue and releases the browser tab lease",
+    );
     await frontend.close();
     // Exercise move input against a local board fixture; never contact an online game.
     const automation = await page.evaluate(async () => {

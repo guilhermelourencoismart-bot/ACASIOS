@@ -115,7 +115,7 @@ export default async function calculateBestMoves(currentFen, config = {}) {
         if(isPlayerTurn) {
             const runtime = await getChessinsper(this, profileName);
             if(runtime) {
-                profileVariables.chessinsperContext = await this.CommLink.commands.chessinsperContext() || {};
+                profileVariables.chessinsperContext = await this.CommLink.commands.chessinsperContext({ profile: profileName }) || {};
                 if(!isCurrentCalculation()) { calculation.finished = true; return; }
                 await applyChessinsperSearch(this, profileName, analysisFen);
             }

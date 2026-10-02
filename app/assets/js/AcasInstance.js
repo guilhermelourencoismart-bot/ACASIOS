@@ -1115,9 +1115,25 @@ export default class AcasInstance {
             controlledMoves = result.moves;
             this.pV[profile].chessinsperSelectionFen = controlFen;
             if(finalResult && result.choice) this.CommLink.commands.chessinsperMove({
-                ...result.choice, profile, settings: chessinsper.settings, fen: controlFen
+                ...result.choice, profile, settings: chessinsper.settings, fen: controlFen,
+                bestCp: moveObjects.find(m => m.ranking === 1)?.cp,
+                bestMate: moveObjects.find(m => m.ranking === 1)?.mate
             });
         }
+
+        let coach = this.instanceElem?.querySelector('.instance-chessinsper-coach');
+        if(chessinsper?.settings.coach.enabled) {
+            if(!coach && this.instanceElem) {
+                coach = document.createElement('div');
+                coach.className = 'instance-chessinsper-coach';
+                this.instanceElem.append(coach);
+            }
+            const report = chessinsper.coachReport(controlFen, controlledMoves);
+            if(coach) {
+                coach.hidden = false;
+                coach.textContent = report ? `Coach · ${report.move}${report.notes.length ? ' · ' + report.notes.join(', ') : ''}\n${report.alternatives.length ? 'Alternativas: ' + report.alternatives.join(', ') : ''}${report.threat ? '\nResposta prevista: ' + report.threat : ''}` : 'Coach · aguardando análise';
+            }
+        } else if(coach) coach.hidden = true;
 
         if(chessinsper) {
             this.pV[profile].chessinsperSelection = controlledMoves[0];

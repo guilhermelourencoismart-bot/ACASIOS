@@ -110,6 +110,27 @@
 .chessinsper-disabled details {
   opacity: 0.6;
 }
+.chessinsper-session-status {
+  grid-column: 1 / -1;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  padding: 12px;
+  border-radius: 8px;
+  background: #0003;
+  line-height: 1.6;
+  font-size: 0.84rem;
+}
+.chessinsper-grid > .chessinsper-actions,
+.chessinsper-grid > .chessinsper-description {
+  grid-column: 1 / -1;
+}
+.instance-chessinsper-coach {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+  padding: 8px;
+  font-size: 0.82rem;
+}
 .chessinsper-native-hidden {
   display: none !important;
 }

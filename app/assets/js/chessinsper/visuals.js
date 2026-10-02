@@ -1,6 +1,12 @@
 // Chessinsper computes board information; A.C.A.S UniversalBoardDrawer renders every descriptor.
 export function chessinsperMetrics(runtime, fen, playerColor) {
-  const cfg = runtime.settings.visualIntelligence;
+  const cfg = {
+    ...runtime.settings.visualIntelligence,
+    hanging:
+      runtime.settings.visualIntelligence.hanging ||
+      (runtime.settings.coach?.enabled &&
+        runtime.settings.coach.showHangingPieces),
+  };
   const side = String(playerColor || fen.split(" ")[1]).toLowerCase()[0],
     enemy = side === "w" ? "b" : "w";
   if (!cfg.enabled || (cfg.showOnlyOwnTurn && fen.split(" ")[1] !== side))

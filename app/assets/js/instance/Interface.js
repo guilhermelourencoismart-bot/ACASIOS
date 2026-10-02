@@ -167,6 +167,10 @@ export default class Interface {
         if(!visual) return [];
 
         const shapes = [{ ...visual, bringToFront: idx === 0 }];
+        if(mObj.chessinsperAnnotation) shapes.push({
+            shapeType: 'rectangle', shapeSquare: from,
+            shapeConfig: { style: `fill:none;stroke:${fillColor};stroke-width:0.6%;rx:40%;ry:40%;opacity:${arrowOpacity};` }
+        });
 
         if(oppMovesExist && showOpponentMoveGuess) {
             const opponentStyle = getArrowStyle('opponent', opponentArrowColorHex, arrowOpacity);
