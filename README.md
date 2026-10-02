@@ -2,7 +2,7 @@
 
 # A.C.A.S (Advanced Chess Assistance System)
 
-Este fork inclui **A.C.A.S × Chessinsper**: engines e desenho nativos do A.C.A.S com os perfis, controles visuais e automação adaptados do Chessinsper. Instale o [userscript deste repositório](acas.user.js) e use sua interface correspondente. Base atualizada para **A.C.A.S 2.5.0**, com ativação pelo botão flutuante **Ativar Chessinsper**, sessões persistentes, fila automática, AFK, Coach e comportamentos entre partidas. Versão integrada **2.5.0-chessinsper.3**. Consulte [CHESSINSPER.md](CHESSINSPER.md) e o [relatório de uso](RELATORIO-USUARIO.md).
+A distribuição atual do **Chessinsper** funciona como um userscript complementar ao **A.C.A.S oficial**, com botão flutuante, personalidade, visual nativo, automação, sessões e AFK. Instale o [A.C.A.S original](https://github.com/Psyyke/A.C.A.S) e, separadamente, [chessinsper-acas.user.js](chessinsper-acas.user.js) ([TXT](chessinsper-acas.user.txt)). Use o [painel oficial](https://psyyke.github.io/A.C.A.S/app/). Consulte [CHESSINSPER.md](CHESSINSPER.md) e o [relatório de uso](RELATORIO-USUARIO.md). O fork e seu userscript integrado anterior não são necessários.
 
 > [!WARNING]
 > A.C.A.S is currently in development. Expect bugs, especially on variants.
@@ -14,7 +14,7 @@ A.C.A.S (Advanced Chess Assistance System) is an open-source chess assistant (**
 > [!CAUTION]
 > The use of A.C.A.S may violate the rules and lead to disqualification or banning from tournaments and online platforms. A.C.A.S is meant to be used as a real-time learning tool. Remember, struggling at chess doesn't mean you're unintelligent... it's not an IQ test, just a board game. And even IQ tests only measure certain aspects of your abilities. Use A.C.A.S fairly, be kind to other players.
 
-| [▶️ Abrir ACASIOS](https://guilhermelourencoismart-bot.github.io/ACASIOS/app/) | [⬇️ Instalar script](acas.user.js)  | [💬 Discuss With Community](https://hakorr.github.io/Userscripts/community/invite)
+| [▶️ Abrir A.C.A.S oficial](https://psyyke.github.io/A.C.A.S/app/) | [⬇️ Instalar complemento Chessinsper](chessinsper-acas.user.js)  | [💬 Discuss With Community](https://hakorr.github.io/Userscripts/community/invite)
 |-------|-------|-------|
 
 * Many built in WebAssembly engines (faster than JS)

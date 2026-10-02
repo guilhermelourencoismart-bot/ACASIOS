@@ -1,3 +1,36 @@
+// ==UserScript==
+// @name         Chessinsper para A.C.A.S — Complemento
+// @namespace    Chessinsper.ACASAddon
+// @version      1.0.0
+// @description  Personalidade, setas nativas, automação, sessões e AFK usando o A.C.A.S oficial. Requer instalar A.C.A.S separadamente.
+// @author       Chessrinsper contributors; A.C.A.S contributors
+// @license      GPL-3.0
+// @match        https://psyyke.github.io/A.C.A.S/*
+// @match        https://www.chess.com/*
+// @match        https://lichess.org/*
+// @match        http://localhost/*
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_deleteValue
+// @grant        GM_listValues
+// @grant        GM.getValue
+// @grant        GM.setValue
+// @grant        GM.deleteValue
+// @grant        GM.listValues
+// @grant        unsafeWindow
+// @run-at       document-end
+// @noframes
+// @require      https://update.greasyfork.org/scripts/534637/LegacyGMjs.js?acasv=2
+// @require      https://update.greasyfork.org/scripts/470418/CommLinkjs.js?acasv=2
+// ==/UserScript==
+
+/* Standalone companion. Install official A.C.A.S alongside this script.
+ * No engine binaries or board renderer are supplied by this companion.
+ * A.C.A.S: https://github.com/Psyyke/A.C.A.S — GPL-3.0.
+ * Chessrinsper original strategy code: MIT; notice retained in ChessinsperCore.
+ */
+
+// Component: ChessinsperCore.js
 /*
  * Chessinsper policies adapted from Chessrinsper 1.2.1-rc.1 (MIT), supplied by the user.
  * A.C.A.S owns engine workers, board detection, communication and all shape rendering.
@@ -5012,3 +5045,4099 @@
   root.ChessinsperCore = api;
   if (typeof module === "object" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
+
+
+// Component: ChessinsperAutomation.js
+/* Chessinsper move input adapted from Chessrinsper 1.2.1-rc.1 (MIT).
+ * Uses the existing A.C.A.S board adapter. No overlay, engine or polling loop is added.
+ * Original author: Chessrinsper. MIT permission notice is in ChessinsperCore.js.
+ */
+(function (root) {
+  "use strict";
+  const boardKey = (fen) => String(fen || "").split(" ")[0];
+  function expectedBoard(fen, move) {
+    const rows = boardKey(fen)
+      .split("/")
+      .map((row) =>
+        [...row].flatMap((c) =>
+          /^[1-8]$/.test(c) ? Array(Number(c)).fill(null) : [c],
+        ),
+      );
+    if (
+      rows.length !== 8 ||
+      rows.some((r) => r.length !== 8) ||
+      !/^([a-h][1-8]){2}[qrbn]?$/.test(move || "")
+    )
+      return null;
+    const coord = (s) => [8 - Number(s[1]), s.charCodeAt(0) - 97],
+      [fr, fc] = coord(move.slice(0, 2)),
+      [tr, tc] = coord(move.slice(2, 4));
+    let piece = rows[fr][fc];
+    if (!piece) return null;
+    const white = piece === piece.toUpperCase();
+    if ((fen.split(" ")[1] === "w") !== white) return null;
+    if (piece.toLowerCase() === "p" && fc !== tc && !rows[tr][tc])
+      rows[fr][tc] = null;
+    rows[fr][fc] = null;
+    if (move[4]) piece = white ? move[4].toUpperCase() : move[4];
+    rows[tr][tc] = piece;
+    if (piece.toLowerCase() === "k" && Math.abs(tc - fc) === 2) {
+      const rook = tc > fc ? 7 : 0;
+      rows[tr][tc > fc ? tc - 1 : tc + 1] = rows[tr][rook];
+      rows[tr][rook] = null;
+    }
+    return rows
+      .map((row) => {
+        let text = "",
+          empty = 0;
+        for (const p of row) {
+          if (!p) empty++;
+          else {
+            if (empty) {
+              text += empty;
+              empty = 0;
+            }
+            text += p;
+          }
+        }
+        return text + (empty || "");
+      })
+      .join("/");
+  }
+  function create(adapter) {
+    let active = null;
+    const handled = new Set();
+    const State = {
+      playerColor: "w",
+      human: { lastMouseX: null, lastMouseY: null },
+    };
+    let CONFIG = {
+      dragSpeed: 1,
+      antiDetection: { changeOfMind: { enabled: false } },
+    };
+    const Game = {
+      getBoard: () => adapter.getBoard(),
+      squareToCoords: (s) => s.charCodeAt(0) - 96 + s[1],
+    };
+    const Account = {
+      currentPersona: () =>
+        ({
+          mouse: {
+            jitterScale: 1,
+            clickHoldMs: { min: 50, max: 110 },
+            speedScale: 1,
+          },
+          trackpad: {
+            jitterScale: 1.45,
+            clickHoldMs: { min: 70, max: 150 },
+            speedScale: 0.85,
+          },
+          tablet: {
+            jitterScale: 1.2,
+            clickHoldMs: { min: 90, max: 180 },
+            speedScale: 0.95,
+          },
+        })[adapter.persona?.(active?.profile)] || null,
+    };
+    const UI = { toast: () => {} };
+    const Utils = {
+      randomRange: (a, b) => a + Math.random() * (b - a),
+      gaussianRandom: (m = 0, s = 1) =>
+        m +
+        Math.sqrt(-2 * Math.log(Math.max(Number.EPSILON, Math.random()))) *
+          Math.cos(2 * Math.PI * Math.random()) *
+          s,
+      humanDelay: (a, b) => a + Math.random() * (b - a),
+      log: () => {},
+      sleep: async (ms) => {
+        await new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+        if (
+          active &&
+          (active.cancelled ||
+            Date.now() > active.deadline ||
+            !adapter.enabled(active.profile, active.settings))
+        )
+          throw new Error("input-cancelled");
+      },
+    };
+    const Humanizer = {
+      showClick: () => {},
+      createEvent: (type, x, y, options = {}) => {
+        const defaults = {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          detail: 1,
+          screenX: x,
+          screenY: y,
+          clientX: x,
+          clientY: y,
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true,
+          button: 0,
+          buttons: 1,
+          which: 1,
+          composed: true,
+        };
+        return new PointerEvent(type, { ...defaults, ...options });
+      },
+      dragDrop: async (fromSq, toSq) => {
+        const board = Game.getBoard();
+        if (!board) return false;
+        const startPos = Humanizer.getCoords(fromSq);
+        const endPos = Humanizer.getCoords(toSq);
+        if (!startPos || !endPos) return false;
+
+        // Hardware persona shapes the drag character:
+        //   trackpad -> slower, noisier, longer click-hold
+        //   mouse    -> baseline
+        //   tablet   -> medium noise, slow click-hold
+        const persona = Account.currentPersona() || {
+          jitterScale: 1,
+          clickHoldMs: { min: 50, max: 110 },
+          speedScale: 1,
+        };
+        const jScale = persona.jitterScale;
+
+        Humanizer.showClick(startPos.x, startPos.y, "#00ff00");
+        const fromCoords = Game.squareToCoords(fromSq);
+        const pieceEl =
+          board.querySelector(`.piece.square-${fromCoords}`) ||
+          document.elementFromPoint(startPos.x, startPos.y);
+        const targetSource = pieceEl || board;
+        const opts = {
+          bubbles: true,
+          composed: true,
+          buttons: 1,
+          pointerId: 1,
+          isPrimary: true,
+        };
+
+        const pickupNoise = () => Utils.gaussianRandom(0, 2 * jScale);
+        const sx = startPos.x + pickupNoise();
+        const sy = startPos.y + pickupNoise();
+
+        // pointerType advertises what device the "user" is on. Trackpads still
+        // register as 'mouse' in browser API but some sites sniff this; we keep
+        // it as 'mouse' for all personas (trackpad is a mouse device to the DOM).
+        const realisticPointerProps = (x, y, prevX, prevY) => ({
+          width: 1,
+          height: 1,
+          pressure: 0.5 + Math.random() * 0.25,
+          tangentialPressure: 0,
+          tiltX: Math.round(Utils.gaussianRandom(0, 3 * jScale)),
+          tiltY: Math.round(Utils.gaussianRandom(0, 3 * jScale)),
+          twist: 0,
+          pointerType: "mouse",
+          movementX: prevX != null ? Math.round(x - prevX) : 0,
+          movementY: prevY != null ? Math.round(y - prevY) : 0,
+        });
+
+        targetSource.dispatchEvent(
+          new PointerEvent("pointerover", {
+            ...opts,
+            ...realisticPointerProps(sx, sy),
+            clientX: sx,
+            clientY: sy,
+          }),
+        );
+        targetSource.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            ...opts,
+            ...realisticPointerProps(sx, sy),
+            clientX: sx,
+            clientY: sy,
+          }),
+        );
+        targetSource.dispatchEvent(
+          new MouseEvent("mousedown", { ...opts, clientX: sx, clientY: sy }),
+        );
+
+        // Click-hold time is persona-specific (trackpad/tablet hold longer).
+        const spd = (CONFIG.dragSpeed || 1.0) / persona.speedScale;
+        const clickHold = Utils.randomRange(
+          persona.clickHoldMs.min,
+          persona.clickHoldMs.max,
+        );
+        await Utils.sleep(clickHold);
+
+        // Helper: run a noisy human-like drag path between two points.
+        // IMPORTANT: we dispatch pointermove to the SAME element that received
+        // pointerdown (`targetSource`) whenever possible. This preserves the
+        // implicit pointer-capture contract Chess.com's drag handler expects.
+        // Dispatching to `document` breaks that contract and leaves a detectable
+        // gap in the pointer event target chain.
+        const bezierPath = async (from, to, stepCount, speedMult = 1) => {
+          const pdx = to.x - from.x,
+            pdy = to.y - from.y;
+          const pDist = Math.sqrt(pdx * pdx + pdy * pdy);
+          if (pDist < 1) return;
+
+          // Multiple random control points for a wobbly spline, not a clean curve
+          const perpX = -pdy / pDist,
+            perpY = pdx / pDist;
+          const cp1t = 0.25 + Math.random() * 0.15;
+          const cp2t = 0.55 + Math.random() * 0.15;
+          const wobble1 = Utils.gaussianRandom(0, pDist * 0.18 * jScale);
+          const wobble2 = Utils.gaussianRandom(0, pDist * 0.14 * jScale);
+          const cp1 = {
+            x: from.x + pdx * cp1t + perpX * wobble1,
+            y: from.y + pdy * cp1t + perpY * wobble1,
+          };
+          const cp2 = {
+            x: from.x + pdx * cp2t + perpX * wobble2,
+            y: from.y + pdy * cp2t + perpY * wobble2,
+          };
+
+          // Cubic bezier eval
+          const cubicBez = (a, b, c, d, t) => {
+            const omt = 1 - t;
+            return (
+              omt * omt * omt * a +
+              3 * omt * omt * t * b +
+              3 * omt * t * t * c +
+              t * t * t * d
+            );
+          };
+
+          // Wobble state that drifts smoothly (fake Perlin)
+          let wobX = 0,
+            wobY = 0;
+          const wobDrift = () => {
+            wobX += Utils.gaussianRandom(0, 1.2 * jScale);
+            wobY += Utils.gaussianRandom(0, 1.2 * jScale);
+            wobX *= 0.7;
+            wobY *= 0.7; // dampen so it doesn't run away
+          };
+
+          const totalSteps = Math.max(stepCount, Math.round(pDist / 6));
+          let lastPauseAt = 0;
+
+          for (let i = 1; i <= totalSteps; i++) {
+            const t = i / totalSteps;
+
+            // Base position from cubic bezier
+            let cx_ = cubicBez(from.x, cp1.x, cp2.x, to.x, t);
+            let cy_ = cubicBez(from.y, cp1.y, cp2.y, to.y, t);
+
+            // Perpendicular wobble — stronger in the middle, fades at endpoints
+            wobDrift();
+            const wobbleEnvelope = Math.sin(t * Math.PI) * 1.5;
+            cx_ += wobX * wobbleEnvelope;
+            cy_ += wobY * wobbleEnvelope;
+
+            // Random high-freq noise (hand tremor)
+            const tremor =
+              Math.max(0.3, (1 - t) * 2.5 + Math.sin(t * 12) * 0.5) * jScale;
+            cx_ += Utils.gaussianRandom(0, tremor);
+            cy_ += Utils.gaussianRandom(0, tremor);
+
+            const rpp = realisticPointerProps(cx_, cy_, prevMoveX, prevMoveY);
+            targetSource.dispatchEvent(
+              new PointerEvent("pointermove", {
+                ...opts,
+                ...rpp,
+                clientX: cx_,
+                clientY: cy_,
+              }),
+            );
+            targetSource.dispatchEvent(
+              new MouseEvent("mousemove", {
+                ...opts,
+                clientX: cx_,
+                clientY: cy_,
+                movementX: rpp.movementX,
+                movementY: rpp.movementY,
+              }),
+            );
+            prevMoveX = cx_;
+            prevMoveY = cy_;
+
+            // Speed: slow start, fast middle, slow end (bell curve)
+            const bell = Math.sin(t * Math.PI);
+            const baseDelay = Utils.randomRange(6, 18) * (1.4 - bell * 0.9);
+            const delay = Math.max(3, Math.round(baseDelay * speedMult * spd));
+
+            // Most steps get a delay, but vary the chance
+            if (Math.random() < 0.7) await Utils.sleep(delay);
+
+            // Occasional micro-pause (human recalculating / hand jitter)
+            if (
+              t > 0.15 &&
+              t < 0.85 &&
+              t - lastPauseAt > 0.2 &&
+              Math.random() < 0.08
+            ) {
+              await Utils.sleep(Utils.randomRange(30, 80) * spd);
+              lastPauseAt = t;
+            }
+          }
+        };
+
+        const dx = endPos.x - startPos.x;
+        const dy = endPos.y - startPos.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const sqSize = board.getBoundingClientRect().width / 8;
+        let prevMoveX = sx,
+          prevMoveY = sy;
+
+        // --- CHANGE-OF-MIND FAKE-OUT ---
+        const com = CONFIG.antiDetection.changeOfMind;
+        const doFakeout =
+          com.enabled && Math.random() < com.chance && dist > sqSize * 1.2;
+
+        if (doFakeout) {
+          // Pick a fake target: a square adjacent to the real target but NOT the real target
+          const offsets = [
+            [-1, 0],
+            [1, 0],
+            [0, -1],
+            [0, 1],
+            [-1, -1],
+            [1, 1],
+            [-1, 1],
+            [1, -1],
+          ];
+          const realFile = endPos.x,
+            realRank = endPos.y;
+          const pick = offsets[Math.floor(Math.random() * offsets.length)];
+          const fakeX = endPos.x + pick[0] * sqSize;
+          const fakeY = endPos.y + pick[1] * sqSize;
+          // Clamp to board bounds
+          const bRect = board.getBoundingClientRect();
+          const clampX = Math.max(
+            bRect.left + sqSize * 0.5,
+            Math.min(bRect.right - sqSize * 0.5, fakeX),
+          );
+          const clampY = Math.max(
+            bRect.top + sqSize * 0.5,
+            Math.min(bRect.bottom - sqSize * 0.5, fakeY),
+          );
+          const fakePos = { x: clampX, y: clampY };
+
+          // Phase 1: drag toward the fake square (go ~75-90% of the way)
+          const fakeSteps = Math.max(6, Math.min(14, Math.round(dist / 10)));
+          const approach = 0.75 + Math.random() * 0.15;
+          const nearFake = {
+            x: startPos.x + (fakePos.x - startPos.x) * approach,
+            y: startPos.y + (fakePos.y - startPos.y) * approach,
+          };
+          await bezierPath(startPos, nearFake, fakeSteps, 1.0);
+
+          // Phase 2: slow down near the fake square (decelerating micro-movements)
+          const slowSteps = Math.round(Utils.randomRange(2, 5));
+          for (let i = 0; i < slowSteps; i++) {
+            const driftX = prevMoveX + Utils.gaussianRandom(0, 3);
+            const driftY = prevMoveY + Utils.gaussianRandom(0, 3);
+            const rpp = realisticPointerProps(
+              driftX,
+              driftY,
+              prevMoveX,
+              prevMoveY,
+            );
+            targetSource.dispatchEvent(
+              new PointerEvent("pointermove", {
+                ...opts,
+                ...rpp,
+                clientX: driftX,
+                clientY: driftY,
+              }),
+            );
+            targetSource.dispatchEvent(
+              new MouseEvent("mousemove", {
+                ...opts,
+                clientX: driftX,
+                clientY: driftY,
+                movementX: rpp.movementX,
+                movementY: rpp.movementY,
+              }),
+            );
+            prevMoveX = driftX;
+            prevMoveY = driftY;
+            await Utils.sleep(Utils.randomRange(25, 60));
+          }
+
+          // Phase 3: hesitate — hold still
+          const hesitate = Utils.humanDelay(
+            com.hesitateMs.min,
+            com.hesitateMs.max,
+          );
+          Utils.log(
+            `Change-of-mind: faked toward (${pick[0]},${pick[1]}), hesitating ${Math.round(hesitate)}ms`,
+            "debug",
+          );
+          UI.toast(
+            "Fake-Out",
+            `Changed mind mid-drag — redirecting to real target`,
+            "fakeout",
+            2500,
+          );
+          await Utils.sleep(hesitate);
+
+          // Phase 4: redirect to real target (slightly faster, more decisive)
+          const redirectSteps = Math.max(
+            6,
+            Math.min(12, Math.round(dist / 12)),
+          );
+          await bezierPath(
+            { x: prevMoveX, y: prevMoveY },
+            endPos,
+            redirectSteps,
+            0.7,
+          );
+        } else {
+          // Normal drag path
+          const steps = Math.max(
+            8,
+            Math.min(18, Math.round(dist / 8) + Math.round(Math.random() * 4)),
+          );
+          await bezierPath(startPos, endPos, steps, 1.0);
+        }
+
+        // Overshoot + settle — common in real mouse movement
+        if (Math.random() < 0.35) {
+          const ovMag = Utils.randomRange(3, 10);
+          const ovAngle = Math.random() * Math.PI * 2;
+          const ovX = endPos.x + Math.cos(ovAngle) * ovMag;
+          const ovY = endPos.y + Math.sin(ovAngle) * ovMag;
+          const rpp1 = realisticPointerProps(ovX, ovY, prevMoveX, prevMoveY);
+          targetSource.dispatchEvent(
+            new PointerEvent("pointermove", {
+              ...opts,
+              ...rpp1,
+              clientX: ovX,
+              clientY: ovY,
+            }),
+          );
+          prevMoveX = ovX;
+          prevMoveY = ovY;
+          await Utils.sleep(Utils.randomRange(10, 30) * spd);
+          // Correct back with a small wobble
+          const settleX = endPos.x + Utils.gaussianRandom(0, 1.5);
+          const settleY = endPos.y + Utils.gaussianRandom(0, 1.5);
+          const rpp2 = realisticPointerProps(
+            settleX,
+            settleY,
+            prevMoveX,
+            prevMoveY,
+          );
+          targetSource.dispatchEvent(
+            new PointerEvent("pointermove", {
+              ...opts,
+              ...rpp2,
+              clientX: settleX,
+              clientY: settleY,
+            }),
+          );
+          prevMoveX = settleX;
+          prevMoveY = settleY;
+          await Utils.sleep(Utils.randomRange(8, 20) * spd);
+          // Final settle on target
+          const rpp3 = realisticPointerProps(
+            endPos.x,
+            endPos.y,
+            prevMoveX,
+            prevMoveY,
+          );
+          targetSource.dispatchEvent(
+            new PointerEvent("pointermove", {
+              ...opts,
+              ...rpp3,
+              clientX: endPos.x,
+              clientY: endPos.y,
+            }),
+          );
+          await Utils.sleep(Utils.randomRange(5, 15) * spd);
+        }
+
+        const toCoords = Game.squareToCoords(toSq);
+        const targetEl =
+          board.querySelector(`.square-${toCoords}`) ||
+          document.elementFromPoint(endPos.x, endPos.y);
+        const dropTarget = targetEl || board;
+
+        const dropX = endPos.x + Utils.gaussianRandom(0, 1.5);
+        const dropY = endPos.y + Utils.gaussianRandom(0, 1.5);
+        Humanizer.showClick(endPos.x, endPos.y, "red");
+
+        dropTarget.dispatchEvent(
+          new PointerEvent("pointerup", {
+            ...opts,
+            clientX: dropX,
+            clientY: dropY,
+          }),
+        );
+        dropTarget.dispatchEvent(
+          new MouseEvent("mouseup", {
+            ...opts,
+            clientX: dropX,
+            clientY: dropY,
+          }),
+        );
+        dropTarget.dispatchEvent(
+          new PointerEvent("click", {
+            ...opts,
+            clientX: dropX,
+            clientY: dropY,
+          }),
+        );
+
+        // (T3 / B10) Save real mouse position so IdleBehavior can drift from here
+        State.human.lastMouseX = dropX;
+        State.human.lastMouseY = dropY;
+        return true;
+      },
+      clickSquare: async (square, pointerId = 1) => {
+        const board = Game.getBoard();
+        const pos = Humanizer.getCoords(square);
+        if (!board || !pos) return false;
+        const coords = Game.squareToCoords(square);
+        const target =
+          board.querySelector(`.piece.square-${coords}`) ||
+          board.querySelector(`.square-${coords}`) ||
+          document.elementFromPoint(pos.x, pos.y) ||
+          board;
+        const x = pos.x + Utils.gaussianRandom(0, 2.2);
+        const y = pos.y + Utils.gaussianRandom(0, 2.2);
+        const base = {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          view: window,
+          clientX: x,
+          clientY: y,
+          screenX: x,
+          screenY: y,
+          button: 0,
+          pointerId,
+          pointerType: "mouse",
+          isPrimary: true,
+        };
+        target.dispatchEvent(
+          new PointerEvent("pointerover", { ...base, buttons: 0, pressure: 0 }),
+        );
+        target.dispatchEvent(
+          new MouseEvent("mouseover", { ...base, buttons: 0 }),
+        );
+        await Utils.sleep(Utils.randomRange(18, 55));
+        target.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            ...base,
+            buttons: 1,
+            pressure: 0.5,
+          }),
+        );
+        target.dispatchEvent(
+          new MouseEvent("mousedown", { ...base, buttons: 1 }),
+        );
+        await Utils.sleep(Utils.randomRange(45, 125));
+        target.dispatchEvent(
+          new PointerEvent("pointerup", { ...base, buttons: 0, pressure: 0 }),
+        );
+        target.dispatchEvent(
+          new MouseEvent("mouseup", { ...base, buttons: 0 }),
+        );
+        target.dispatchEvent(
+          new MouseEvent("click", { ...base, buttons: 0, detail: 1 }),
+        );
+        Humanizer.showClick(x, y, "#4caf50");
+        State.human.lastMouseX = x;
+        State.human.lastMouseY = y;
+        return true;
+      },
+      clickMove: async (fromSq, toSq) => {
+        if (!(await Humanizer.clickSquare(fromSq, 3))) return false;
+        await Utils.sleep(Utils.randomRange(90, 260));
+        return Humanizer.clickSquare(toSq, 4);
+      },
+      handlePromotion: async (promo = "q") => {
+        const pieceMap = { q: "queen", r: "rook", b: "bishop", n: "knight" };
+        const pieceName = pieceMap[promo] || "queen";
+        Utils.log(`Promotion: selecting ${pieceName}`);
+
+        let promoEl = null;
+        for (let i = 0; i < 20; i++) {
+          await Utils.sleep(100);
+          const selectors = [
+            `.promotion-piece[data-piece="${promo}"]`,
+            `.promotion-piece.w${promo}, .promotion-piece.b${promo}`,
+            `[class*="promotion"] [class*="${pieceName}"]`,
+            `#promotion-choice piece.${pieceName}`,
+          ];
+          for (const sel of selectors) {
+            promoEl = document.querySelector(sel);
+            if (promoEl) break;
+          }
+          if (!promoEl) {
+            const promoContainer = document.querySelector(
+              '#promotion-choice, .promotion-window, .promotion-area, [class*="promotion-"]',
+            );
+            if (promoContainer) {
+              const pieces = promoContainer.querySelectorAll(
+                '.promotion-piece, piece, [class*="piece"]',
+              );
+              if (pieces.length > 0) {
+                promoEl =
+                  promo === "q"
+                    ? pieces[0]
+                    : pieces[{ r: 1, b: 2, n: 3 }[promo] || 0];
+              }
+            }
+          }
+          if (promoEl) break;
+        }
+
+        if (promoEl) {
+          // Pick a slightly off-center hit point so chess.com's input stream
+          // sees a non-perfect tap (real fingers/mice never hit dead-center).
+          const rect = promoEl.getBoundingClientRect();
+          const jitter = (mag) => (Math.random() * 2 - 1) * mag;
+          const x = rect.left + rect.width / 2 + jitter(rect.width * 0.15);
+          const y = rect.top + rect.height / 2 + jitter(rect.height * 0.15);
+          const opts = {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            buttons: 1,
+            button: 0,
+            pointerId: 2,
+            pointerType: "mouse",
+            isPrimary: true,
+            pressure: 0.5,
+            view: window,
+          };
+          // Full natural sequence: pointerover -> pointerenter -> pointerdown
+          // -> mousedown -> (small hold) -> pointerup -> mouseup -> click.
+          // No raw .click() — it produces an untrusted synthetic event with no
+          // associated pointerdown/up history, which Chess.com's input audit
+          // can flag as scripted.
+          promoEl.dispatchEvent(
+            new PointerEvent("pointerover", {
+              ...opts,
+              clientX: x,
+              clientY: y,
+              buttons: 0,
+            }),
+          );
+          promoEl.dispatchEvent(
+            new PointerEvent("pointerenter", {
+              ...opts,
+              clientX: x,
+              clientY: y,
+              buttons: 0,
+            }),
+          );
+          promoEl.dispatchEvent(
+            new MouseEvent("mouseover", {
+              ...opts,
+              clientX: x,
+              clientY: y,
+              buttons: 0,
+            }),
+          );
+          promoEl.dispatchEvent(
+            new MouseEvent("mouseenter", {
+              ...opts,
+              clientX: x,
+              clientY: y,
+              buttons: 0,
+            }),
+          );
+          await Utils.sleep(Utils.randomRange(20, 60));
+          promoEl.dispatchEvent(
+            new PointerEvent("pointerdown", {
+              ...opts,
+              clientX: x,
+              clientY: y,
+            }),
+          );
+          promoEl.dispatchEvent(
+            new MouseEvent("mousedown", { ...opts, clientX: x, clientY: y }),
+          );
+          await Utils.sleep(Utils.randomRange(40, 110));
+          promoEl.dispatchEvent(
+            new PointerEvent("pointerup", {
+              ...opts,
+              clientX: x,
+              clientY: y,
+              buttons: 0,
+            }),
+          );
+          promoEl.dispatchEvent(
+            new MouseEvent("mouseup", {
+              ...opts,
+              clientX: x,
+              clientY: y,
+              buttons: 0,
+            }),
+          );
+          promoEl.dispatchEvent(
+            new MouseEvent("click", {
+              ...opts,
+              clientX: x,
+              clientY: y,
+              buttons: 0,
+            }),
+          );
+          Utils.log(`Promotion: clicked ${pieceName}`);
+        } else {
+          Utils.log(
+            "Promotion dialog not found - default queen will be used",
+            "warn",
+          );
+        }
+      },
+      getCoords: (sq) => {
+        const board = Game.getBoard();
+        if (!board) return null;
+        const rect = board.getBoundingClientRect();
+        const sqSize = rect.width / 8;
+        const isFlipped = State.playerColor === "b";
+        const f = sq.charCodeAt(0) - 97;
+        const r = parseInt(sq[1]) - 1;
+        const x = rect.left + (isFlipped ? 7 - f : f) * sqSize + sqSize / 2;
+        const y = rect.top + (isFlipped ? r : 7 - r) * sqSize + sqSize / 2;
+        return { x, y };
+      },
+    };
+    function release() {
+      const board = adapter.getBoard();
+      if (board) {
+        const r = board.getBoundingClientRect();
+        board.dispatchEvent(
+          new PointerEvent("pointerup", {
+            bubbles: true,
+            clientX: r.x + r.width / 2,
+            clientY: r.y + r.height / 2,
+            buttons: 0,
+          }),
+        );
+        board.dispatchEvent(
+          new MouseEvent("mouseup", { bubbles: true, buttons: 0 }),
+        );
+      }
+    }
+    function valid(transaction) {
+      const currentFen = adapter.getFen();
+      return (
+        !transaction.cancelled &&
+        adapter.enabled(transaction.profile, transaction.settings) &&
+        boardKey(currentFen) === transaction.before &&
+        String(currentFen).split(" ")[1] === transaction.turn &&
+        adapter.getBoard()?.isConnected !== false
+      );
+    }
+    async function run(packet) {
+      const settings = ChessinsperCore.normalizeSettings(packet.settings),
+        before = boardKey(packet.fen),
+        expected = expectedBoard(packet.fen, packet.move);
+      if (
+        !expected ||
+        !adapter.enabled(packet.profile, settings) ||
+        boardKey(adapter.getFen()) !== before ||
+        String(adapter.getFen()).split(" ")[1] !== packet.fen.split(" ")[1] ||
+        (adapter.getOrientation() &&
+          adapter.getOrientation() !== packet.fen.split(" ")[1])
+      )
+        return { status: "stale" };
+      const key = before + "|" + packet.profile;
+      if (active) return { status: "busy" };
+      if (handled.has(key)) return { status: "duplicate" };
+      handled.add(key);
+      if (handled.size > 128) handled.delete(handled.values().next().value);
+      const transaction = {
+        profile: packet.profile,
+        settings,
+        before,
+        turn: packet.fen.split(" ")[1],
+        cancelled: false,
+        deadline:
+          Date.now() +
+          Math.max(0, packet.delayMs || 0) +
+          settings.inputExecution.watchdogMs,
+      };
+      active = transaction;
+      State.playerColor = adapter.getOrientation() || packet.fen.split(" ")[1];
+      CONFIG.dragSpeed = settings.dragSpeed || 1;
+      try {
+        const until =
+          Date.now() +
+          Math.max(0, Math.min(60000, Number(packet.delayMs) || 0));
+        while (Date.now() < until) {
+          if (!valid(transaction)) return { status: "stale" };
+          await Utils.sleep(Math.min(50, until - Date.now()));
+        }
+        for (
+          let attempt = 0;
+          attempt < settings.inputExecution.maxAttempts;
+          attempt++
+        ) {
+          if (!valid(transaction)) return { status: "stale" };
+          const selected = settings.automation.method;
+          const method =
+            selected === "mixed"
+              ? attempt % 2 === 0
+                ? "click"
+                : "drag"
+              : attempt === 0
+                ? selected
+                : selected === "click"
+                  ? "drag"
+                  : "click";
+          if (method === "click")
+            await Humanizer.clickMove(
+              packet.move.slice(0, 2),
+              packet.move.slice(2, 4),
+            );
+          else
+            await Humanizer.dragDrop(
+              packet.move.slice(0, 2),
+              packet.move.slice(2, 4),
+            );
+          if (packet.move[4]) await Humanizer.handlePromotion(packet.move[4]);
+          const end =
+            Date.now() + settings.inputExecution.confirmationTimeoutMs;
+          let stable = 0;
+          while (Date.now() < end) {
+            const now = boardKey(adapter.getFen());
+            if (now === expected) {
+              stable++;
+              if (stable >= settings.inputExecution.stableReads) {
+                adapter.onConfirmed?.(packet);
+                return {
+                  status: "confirmed",
+                  move: packet.move,
+                  attempt: attempt + 1,
+                };
+              }
+            } else {
+              stable = 0;
+            }
+            await Utils.sleep(settings.inputExecution.pollMs);
+          }
+          if (boardKey(adapter.getFen()) !== before)
+            return { status: "superseded" };
+          release();
+        }
+        return { status: "failed" };
+      } catch (error) {
+        return {
+          status:
+            transaction.cancelled ||
+            !adapter.enabled(transaction.profile, transaction.settings)
+              ? "cancelled"
+              : "failed",
+          reason: error.message,
+        };
+      } finally {
+        release();
+        active = null;
+      }
+    }
+    return {
+      run,
+      cancel: () => {
+        if (active) active.cancelled = true;
+      },
+      reset: () => {
+        if (active) active.cancelled = true;
+        handled.clear();
+      },
+      isActive: () => !!active,
+    };
+  }
+  const api = { create, expectedBoard };
+  root.ChessinsperAutomation = api;
+  if (typeof module === "object" && module.exports) module.exports = api;
+})(typeof globalThis !== "undefined" ? globalThis : this);
+
+
+// Component: ChessinsperBehavior.js
+/* Chessinsper session and browser lifecycle policies adapted from Chessrinsper 1.2.1-rc.1 (MIT).
+ * Original author: Chessrinsper. MIT permission notice is in ChessinsperCore.js.
+ * Engines and drawing belong to A.C.A.S.
+ */
+(function (root) {
+  "use strict";
+  const copy = (value) => JSON.parse(JSON.stringify(value));
+  const key = (domain, profile) => `ChessinsperBehavior:${domain}:${profile}`;
+  const number = (value, fallback = 0) =>
+    Number.isFinite(value) ? value : fallback;
+  function create(settings, adapter = {}) {
+    const now = adapter.now || Date.now,
+      random = adapter.random || Math.random;
+    let config = root.ChessinsperCore.normalizeSettings(settings);
+    const restored = adapter.read?.();
+    const fresh = () => ({
+      games: 0,
+      wins: 0,
+      losses: 0,
+      draws: 0,
+      unknown: 0,
+      winStreak: 0,
+    });
+    const state = {
+      version: 1,
+      sessionSerial: 0,
+      session: fresh(),
+      totalGames: 0,
+      results: [],
+      timestamps: [],
+      processed: [],
+      history: [],
+      activeGame: null,
+      nextQueueAt: 0,
+      breakUntil: 0,
+      paused: false,
+      queueAttempts: 0,
+      lastQueueAt: 0,
+      sessionTC: null,
+      tiltGamesLeft: 0,
+      tiltActive: false,
+      persona: null,
+      moveCount: 0,
+      cpLossSum: 0,
+      recoveries: 0,
+      lastRecovery: null,
+      lastAnalysisFen: null,
+      losingPositions: 0,
+      evaluationHistory: [],
+      resignAt: 0,
+      resignDeadline: 0,
+      resignStage: null,
+    };
+    if (restored?.version === 1) {
+      for (const name of Object.keys(state)) {
+        const value = restored[name];
+        if (Array.isArray(state[name]) && Array.isArray(value))
+          state[name] = value.slice(-100);
+        else if (name === "session" && value && typeof value === "object") {
+          for (const field of Object.keys(state.session))
+            state.session[field] = Math.max(0, number(value[field]));
+        } else if (typeof state[name] === "number")
+          state[name] = Math.max(0, number(value));
+        else if (typeof state[name] === "boolean" && typeof value === "boolean")
+          state[name] = value;
+        else if (
+          state[name] === null &&
+          (typeof value === "string" || value === null)
+        )
+          state[name] = value;
+      }
+    }
+    let snapshot = {},
+      serialized = "",
+      lastWriteAt = 0,
+      reason = "Aguardando tabuleiro";
+    const between = (range) => range.min + random() * (range.max - range.min);
+    const persist = () => {
+      const data = { ...copy(state), updatedAt: now(), status: status() };
+      // Persist only when policies or the visible status change, not every heartbeat.
+      const signature = JSON.stringify({ ...data, updatedAt: 0 });
+      if (serialized !== signature || now() - lastWriteAt >= 15000) {
+        serialized = signature;
+        lastWriteAt = now();
+        adapter.write?.(data);
+      }
+    };
+    function resetSession() {
+      state.session = fresh();
+      state.sessionSerial++;
+      state.breakUntil = 0;
+      state.sessionTC = null;
+      state.queueAttempts = 0;
+      state.paused = false;
+      state.nextQueueAt = snapshot.gameOver
+        ? now() + config.session.betweenGamesMs.min
+        : 0;
+      persist();
+    }
+    function beginGame(id) {
+      if (!id || state.activeGame === id) return;
+      state.activeGame = id;
+      state.queueAttempts = 0;
+      state.lastQueueAt = 0;
+      state.nextQueueAt = 0;
+      state.lastAnalysisFen = null;
+      state.losingPositions = 0;
+      state.resignAt = 0;
+      state.resignDeadline = 0;
+      state.resignStage = null;
+      state.tiltActive = config.tilt.enabled && state.tiltGamesLeft > 0;
+      state.tiltGamesLeft = Math.max(0, state.tiltGamesLeft - 1);
+      if (!state.sessionTC && snapshot.timeControl)
+        state.sessionTC = snapshot.timeControl;
+      if (!state.persona)
+        state.persona = ["mouse", "mouse", "mouse", "trackpad", "tablet"][
+          Math.floor(random() * 5)
+        ];
+      persist();
+    }
+    function finishGame(id, result) {
+      if (!id) return false;
+      if (state.processed.includes(id)) {
+        const game = state.history.find((entry) => entry.id === id);
+        if (game?.result !== "?" || !["W", "L", "D"].includes(result))
+          return false;
+        game.result = result;
+        state.results = [...state.results, result].slice(-50);
+        if (game.sessionSerial === state.sessionSerial) {
+          state.session.unknown = Math.max(0, state.session.unknown - 1);
+          state.session[{ W: "wins", L: "losses", D: "draws" }[result]]++;
+          state.session.winStreak =
+            result === "W" ? state.session.winStreak + 1 : 0;
+          if (
+            config.session.enabled &&
+            config.session.maxWinStreak > 0 &&
+            state.session.winStreak >= config.session.maxWinStreak &&
+            !state.breakUntil
+          )
+            state.breakUntil = now() + config.session.breakDurationMs;
+        }
+        if (result === "L" && config.tilt.enabled)
+          state.tiltGamesLeft = config.tilt.durationGames;
+        persist();
+        return true;
+      }
+      state.processed.push(id);
+      state.processed = state.processed.slice(-100);
+      const outcome = ["W", "L", "D"].includes(result) ? result : "?";
+      state.session.games++;
+      state.totalGames++;
+      state.session[
+        { W: "wins", L: "losses", D: "draws", "?": "unknown" }[outcome]
+      ]++;
+      state.session.winStreak =
+        outcome === "W" ? state.session.winStreak + 1 : 0;
+      if (outcome !== "?")
+        state.results = [...state.results, outcome].slice(-50);
+      if (outcome === "L" && config.tilt.enabled)
+        state.tiltGamesLeft = config.tilt.durationGames;
+      state.timestamps = [
+        ...state.timestamps.filter(
+          (t) => Number.isFinite(t) && now() - t < 3600000,
+        ),
+        now(),
+      ];
+      state.history = [
+        ...state.history,
+        { id, result: outcome, at: now(), sessionSerial: state.sessionSerial },
+      ].slice(-50);
+      state.nextQueueAt = now() + between(config.session.betweenGamesMs);
+      if (config.postGame.enabled && random() < config.postGame.reviewChance)
+        state.nextQueueAt += between(config.postGame.reviewDurationMs);
+      if (
+        config.session.enabled &&
+        (state.session.games >= config.session.maxGamesPerSession ||
+          (config.session.maxWinStreak > 0 &&
+            state.session.winStreak >= config.session.maxWinStreak))
+      )
+        state.breakUntil = now() + config.session.breakDurationMs;
+      persist();
+      return true;
+    }
+    function observe(value) {
+      snapshot = value || {};
+      if (state.breakUntil && now() >= state.breakUntil) resetSession();
+      if (!state.sessionTC && snapshot.timeControl)
+        state.sessionTC = snapshot.timeControl;
+      if (state.resignDeadline && now() >= state.resignDeadline) {
+        state.resignAt = 0;
+        state.resignDeadline = 0;
+        state.resignStage = null;
+      }
+      if (snapshot.gameId && snapshot.fen) beginGame(snapshot.gameId);
+      if (snapshot.gameOver && snapshot.gameId)
+        finishGame(snapshot.gameId, snapshot.result);
+      queueDecision();
+      persist();
+      return context();
+    }
+    function canMove() {
+      return (
+        config.enabled &&
+        !state.paused &&
+        !snapshot.gameOver &&
+        !(config.autoResign.enabled && state.resignAt > 0) &&
+        !(config.coach.enabled && config.coach.disableAutoOnEnable)
+      );
+    }
+    function queueDecision() {
+      let waitUntil = state.nextQueueAt;
+      if (!config.enabled) reason = "Chessinsper desligado";
+      else if (state.paused) reason = "Sessão pausada";
+      else if (config.coach.enabled && config.coach.disableAutoOnEnable)
+        reason = "Coach ativo · execução desligada";
+      else if (!config.session.autoQueue) reason = "Fila automática desligada";
+      else if (!snapshot.gameOver || !snapshot.gameId)
+        reason = "Partida em andamento";
+      else if (state.breakUntil > now()) {
+        reason = "Intervalo de sessão";
+        waitUntil = state.breakUntil;
+      } else if (
+        config.tcLock.enabled &&
+        state.sessionTC &&
+        snapshot.timeControl &&
+        state.sessionTC !== snapshot.timeControl
+      )
+        reason = "Ritmo mudou · reinicie a sessão";
+      else {
+        const recent = state.timestamps.filter(
+          (t) => Number.isFinite(t) && now() - t < 3600000,
+        );
+        if (
+          config.session.enabled &&
+          recent.length >= config.session.maxGamesPerHour
+        ) {
+          reason = "Limite de partidas por hora";
+          waitUntil =
+            recent[recent.length - config.session.maxGamesPerHour] + 3600000;
+        } else if (state.queueAttempts >= 3)
+          reason = "Fila não respondeu · retome a sessão";
+        else if (state.lastQueueAt && now() < state.lastQueueAt + 10000) {
+          reason = "Aguardando nova partida";
+          waitUntil = state.lastQueueAt + 10000;
+        } else if (waitUntil > now()) reason = "Pausa entre partidas";
+        else if (!snapshot.queueAvailable)
+          reason = "Aguardando botão de nova partida";
+        else {
+          reason = "Pronto para nova partida";
+          return { allowed: true, waitUntil: 0, reason };
+        }
+      }
+      return { allowed: false, waitUntil: Math.max(0, waitUntil), reason };
+    }
+    function context() {
+      const warmup = config.warmup;
+      const p = Math.min(1, state.totalGames / warmup.durationGames);
+      const smooth = p * p * (3 - 2 * p);
+      const offset =
+        warmup.enabled && !warmup.manualOverride
+          ? warmup.startEloOffset * (1 - smooth)
+          : 0;
+      const recent = state.results.slice(-config.winrateTarget.sampleGames);
+      const winRate = recent.length
+        ? recent.filter((v) => v === "W").length / recent.length
+        : null;
+      const balance =
+        config.winrateTarget.enabled &&
+        recent.length >= config.winrateTarget.sampleGames &&
+        winRate > config.winrateTarget.target
+          ? Math.min(
+              200,
+              (winRate - config.winrateTarget.target) *
+                config.winrateTarget.overshootBoost *
+                1000,
+            )
+          : 0;
+      let effective = config.engineUI.strength + offset - balance;
+      if (
+        config.opponentAdaptation.enabled &&
+        Number.isFinite(snapshot.opponentRating) &&
+        offset === 0
+      )
+        effective =
+          snapshot.opponentRating + config.opponentAdaptation.ratingEdge;
+      return {
+        effectiveRating: Math.round(Math.max(400, Math.min(3000, effective))),
+        tiltActive: state.tiltActive && config.tilt.enabled,
+        hardwarePersona: config.hardwarePersona.enabled ? state.persona : null,
+        sessionGames: state.session.games,
+        totalGames: state.totalGames,
+        winRate,
+      };
+    }
+    function status() {
+      const decision = queueDecision();
+      return {
+        ...context(),
+        ...copy(state.session),
+        reason,
+        paused: state.paused,
+        waitUntil: decision.waitUntil,
+        queueAttempts: state.queueAttempts,
+        moves: state.moveCount,
+        averageCPLoss: state.moveCount
+          ? Math.round(state.cpLossSum / state.moveCount)
+          : 0,
+        recoveries: state.recoveries,
+        lastRecovery: state.lastRecovery,
+        resignAt: state.resignAt,
+        resignStage: state.resignStage,
+        lastEval: state.evaluationHistory.at(-1)?.cp ?? null,
+      };
+    }
+    return {
+      observe,
+      context,
+      status,
+      canMove,
+      queueDecision,
+      resetSession,
+      configure(value) {
+        config = root.ChessinsperCore.normalizeSettings(value);
+      },
+      pause(value) {
+        state.paused = !!value;
+        if (!value) {
+          state.queueAttempts = 0;
+          state.lastQueueAt = 0;
+        }
+        persist();
+      },
+      queueAttempt() {
+        state.queueAttempts++;
+        state.lastQueueAt = now();
+        persist();
+      },
+      recover(source) {
+        state.recoveries++;
+        state.lastRecovery = source;
+        persist();
+      },
+      recordMove(entry) {
+        const id = `move:${state.activeGame}:${entry.fen}:${entry.move}`;
+        if (state.processed.includes(id)) return;
+        state.processed = [...state.processed, id].slice(-100);
+        state.moveCount++;
+        state.cpLossSum += Math.max(0, number(entry.cpLoss));
+        persist();
+      },
+      recordAnalysis(packet) {
+        if (!packet.fen || packet.fen === state.lastAnalysisFen) return;
+        state.lastAnalysisFen = packet.fen;
+        if (Number.isFinite(packet.bestCp))
+          state.evaluationHistory = [
+            ...state.evaluationHistory,
+            { fen: packet.fen, cp: packet.bestCp, at: now() },
+          ].slice(-100);
+        const ar = config.autoResign;
+        const lost =
+          (Number.isFinite(packet.bestCp) &&
+            packet.bestCp <= ar.evalThreshold * 100) ||
+          (Number.isFinite(packet.bestMate) && packet.bestMate < 0);
+        state.losingPositions = lost ? state.losingPositions + 1 : 0;
+        if (!lost) {
+          state.resignAt = 0;
+          state.resignDeadline = 0;
+          state.resignStage = null;
+        }
+        if (
+          ar.enabled &&
+          !state.resignAt &&
+          state.losingPositions >= ar.consecutiveMoves &&
+          Number(packet.fen.split(" ")[5]) >= ar.minMoveNumber &&
+          random() < ar.resignChance
+        ) {
+          state.resignAt = now() + between(ar.delay);
+          state.resignDeadline = state.resignAt + 10000;
+        }
+        persist();
+      },
+      canResign() {
+        return (
+          config.enabled &&
+          config.autoResign.enabled &&
+          !state.paused &&
+          !snapshot.gameOver &&
+          !(config.coach.enabled && config.coach.disableAutoOnEnable) &&
+          state.resignAt > 0 &&
+          now() >= state.resignAt &&
+          state.resignStage !== "sent"
+        );
+      },
+      resignAttempt(confirmed) {
+        state.resignStage = confirmed ? "sent" : "confirm";
+        state.resignAt = now() + 1500;
+        persist();
+      },
+      checkpoint: () => {
+        persist();
+        return copy(state);
+      },
+    };
+  }
+
+  function createSupervisor(adapter, environment = root) {
+    let interval = null,
+      worker = null,
+      workerURL = null,
+      lastTick = 0,
+      active = false,
+      busy = false,
+      workerRestartAt = 0,
+      rtcGeneration = 0,
+      rtcStarting = false,
+      peers = [],
+      channel = null,
+      rtcTimer = null,
+      rtcTimeout = null,
+      rtcFinish = null;
+    const document = environment.document;
+    const events = ["focus", "pageshow", "online", "visibilitychange"];
+    function recover(source) {
+      adapter.cancel?.();
+      adapter.recover?.(source);
+    }
+    async function tick(source) {
+      if (!active || busy) return;
+      const time = Date.now();
+      if (lastTick && time - lastTick > 15000)
+        recover("retorno após suspensão");
+      lastTick = time;
+      if (!worker && time >= workerRestartAt) startWorker();
+      busy = true;
+      try {
+        await adapter.tick?.(source);
+      } catch (error) {
+        adapter.error?.(error);
+      } finally {
+        busy = false;
+      }
+    }
+    function wake(event) {
+      if (!active) return;
+      recover(event.type);
+      void tick(event.type);
+    }
+    function freeze() {
+      adapter.cancel?.();
+      adapter.checkpoint?.();
+    }
+    function disposeWorker() {
+      worker?.terminate();
+      worker = null;
+      if (workerURL) environment.URL.revokeObjectURL(workerURL);
+      workerURL = null;
+    }
+    function startWorker() {
+      if (!active || worker) return;
+      try {
+        workerURL = environment.URL.createObjectURL(
+          new environment.Blob(
+            ["setInterval(()=>postMessage(Date.now()),1000)"],
+            { type: "text/javascript" },
+          ),
+        );
+        worker = new environment.Worker(workerURL);
+        worker.onmessage = () => void tick("worker");
+        worker.onerror = () => {
+          disposeWorker();
+          workerRestartAt = Date.now() + 30000;
+        };
+      } catch {
+        disposeWorker();
+        workerRestartAt = Date.now() + 60000;
+      }
+    }
+    function closeRTC() {
+      rtcGeneration++;
+      rtcStarting = false;
+      rtcFinish?.(false);
+      rtcFinish = null;
+      if (rtcTimeout) environment.clearTimeout(rtcTimeout);
+      rtcTimeout = null;
+      if (rtcTimer) environment.clearInterval(rtcTimer);
+      rtcTimer = null;
+      channel?.close();
+      channel = null;
+      peers.forEach((peer) => peer.close());
+      peers = [];
+    }
+    async function startRTC() {
+      if (
+        !active ||
+        rtcStarting ||
+        peers.length ||
+        !environment.RTCPeerConnection
+      )
+        return;
+      rtcStarting = true;
+      const generation = rtcGeneration;
+      let timeout;
+      try {
+        const a = new environment.RTCPeerConnection({ iceServers: [] });
+        const b = new environment.RTCPeerConnection({ iceServers: [] });
+        peers = [a, b];
+        const forA = [],
+          forB = [];
+        a.onicecandidate = (e) => {
+          if (e.candidate) {
+            if (b.remoteDescription)
+              b.addIceCandidate(e.candidate).catch(() => {});
+            else forB.push(e.candidate);
+          }
+        };
+        b.onicecandidate = (e) => {
+          if (e.candidate) {
+            if (a.remoteDescription)
+              a.addIceCandidate(e.candidate).catch(() => {});
+            else forA.push(e.candidate);
+          }
+        };
+        b.ondatachannel = (e) => {
+          e.channel.onmessage = () => void tick("rtc");
+        };
+        channel = a.createDataChannel("chessinsper-local", {
+          ordered: false,
+          maxRetransmits: 0,
+        });
+        const connected = new Promise((resolve) => {
+          rtcFinish = resolve;
+          channel.onopen = () => resolve(true);
+          timeout = rtcTimeout = environment.setTimeout(
+            () => resolve(false),
+            8000,
+          );
+        });
+        await a.setLocalDescription(await a.createOffer());
+        await b.setRemoteDescription(a.localDescription);
+        await Promise.all(
+          forB.map((candidate) => b.addIceCandidate(candidate).catch(() => {})),
+        );
+        await b.setLocalDescription(await b.createAnswer());
+        await a.setRemoteDescription(b.localDescription);
+        await Promise.all(
+          forA.map((candidate) => a.addIceCandidate(candidate).catch(() => {})),
+        );
+        const opened = await connected;
+        if (!opened) {
+          if (generation === rtcGeneration) closeRTC();
+          return;
+        }
+        if (!active || generation !== rtcGeneration) return;
+        rtcTimer = environment.setInterval(() => {
+          if (channel?.readyState === "open") channel.send("tick");
+        }, 15000);
+      } catch {
+        if (generation === rtcGeneration) closeRTC();
+      } finally {
+        environment.clearTimeout(timeout);
+        if (generation === rtcGeneration) {
+          rtcStarting = false;
+          rtcTimeout = null;
+          rtcFinish = null;
+        }
+      }
+    }
+    return {
+      start(options = {}) {
+        if (active) {
+          if (options.localKeepAlive) void startRTC();
+          else if (peers.length) closeRTC();
+          return;
+        }
+        active = true;
+        lastTick = Date.now();
+        startWorker();
+        interval = environment.setInterval(() => void tick("interval"), 5000);
+        events.forEach((event) =>
+          environment.addEventListener(event, wake, true),
+        );
+        document?.addEventListener("freeze", freeze, true);
+        document?.addEventListener("resume", wake, true);
+        environment.addEventListener("pagehide", freeze, true);
+        if (options.localKeepAlive) void startRTC();
+        if (document?.wasDiscarded) recover("aba restaurada");
+        void tick("start");
+      },
+      stop() {
+        active = false;
+        environment.clearInterval(interval);
+        interval = null;
+        disposeWorker();
+        closeRTC();
+        adapter.cancel?.();
+        adapter.checkpoint?.();
+        events.forEach((event) =>
+          environment.removeEventListener(event, wake, true),
+        );
+        document?.removeEventListener("freeze", freeze, true);
+        document?.removeEventListener("resume", wake, true);
+        environment.removeEventListener("pagehide", freeze, true);
+      },
+      tick,
+      isActive: () => active,
+    };
+  }
+  const visible = (element) =>
+    !!element &&
+    element.isConnected &&
+    element.getClientRects().length > 0 &&
+    root.getComputedStyle(element).visibility !== "hidden";
+  function readPage(document, playerColor) {
+    const modal = [
+      ...document.querySelectorAll(
+        '[data-cy="game-over-modal"], .game-over-modal, .game-over-component, .game-over-dialog, .game-over-modal-component, .result-wrap',
+      ),
+    ].find(visible);
+    const ended =
+      modal ||
+      [
+        ...document.querySelectorAll(
+          ".game-header-component, .game-header-title, .game__meta .status",
+        ),
+      ].find(
+        (e) =>
+          visible(e) &&
+          /checkmate|xeque.?mate|resigned|abandonou|draw|empate|wins|venceu|time.?out|tempo esgotado/i.test(
+            e.textContent,
+          ),
+      );
+    const text = ended?.textContent || "";
+    let result = /you won|você venceu|voce venceu|vitória|victory/i.test(text)
+      ? "W"
+      : /you lost|você perdeu|voce perdeu|derrota/i.test(text)
+        ? "L"
+        : /\b(draw|empate|stalemate|agreement|repetition)\b/i.test(text)
+          ? "D"
+          : null;
+    const score = text.match(
+      /\b(1\s*[-–]\s*0|0\s*[-–]\s*1|½\s*[-–]\s*½|1\/2\s*[-–]\s*1\/2)\b/,
+    );
+    if (score)
+      result = /½|1\/2/.test(score[1])
+        ? "D"
+        : (score[1].startsWith("1") ? "w" : "b") === playerColor
+          ? "W"
+          : "L";
+    if (!result && /white (wins|won)|brancas venceram/i.test(text))
+      result = playerColor === "w" ? "W" : "L";
+    if (!result && /black (wins|won)|pretas venceram/i.test(text))
+      result = playerColor === "b" ? "W" : "L";
+    let queueButton = [
+      ...document.querySelectorAll(
+        '[data-cy="new-game-button"], [data-cy="game-over-new-game"], .game-over-modal .new-game-button, .game-over-component .new-game-button, .follow-up .button[href="/"], .follow-up .rematch',
+      ),
+    ].find(visible);
+    if (!queueButton && modal)
+      queueButton = [...modal.querySelectorAll("button, a")].find(
+        (e) =>
+          visible(e) &&
+          /^(new (\d+\s*(min|minute)\s*)?game|play again|nova partida|jogar novamente|rematch|revanche)$/i.test(
+            e.textContent.trim(),
+          ),
+      );
+    if (
+      queueButton?.disabled ||
+      queueButton?.getAttribute("aria-disabled") === "true"
+    )
+      queueButton = null;
+    return { gameOver: !!ended, result, queueButton };
+  }
+  const api = { create, createSupervisor, readPage, key };
+  root.ChessinsperBehavior = api;
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+})(typeof globalThis !== "undefined" ? globalThis : this);
+
+
+// Component: ChessinsperAddon.js
+/* Chessinsper companion for the unmodified A.C.A.S GUI. GPL-3.0.
+ * Engine loading, position tracking, UCI transport and SVG rendering belong to A.C.A.S.
+ */
+(function (root) {
+  "use strict";
+  const VERSION = "1.0.0";
+  const PROFILE_PREFIX = "ChessinsperAddon.Profile:";
+  const CLIENT_PREFIX = "ChessinsperAddon.Client:";
+  const LINK_PREFIX = "ChessinsperAddon.Link:";
+  const clone = (value) => JSON.parse(JSON.stringify(value));
+  const id = () =>
+    root.crypto?.randomUUID?.() ||
+    `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const settings = (profile) =>
+    root.ChessinsperCore.normalizeSettings(
+      GM_getValue(PROFILE_PREFIX + profile, {}),
+    );
+  const save = (profile, value) =>
+    GM_setValue(
+      PROFILE_PREFIX + profile,
+      root.ChessinsperCore.normalizeSettings(value),
+    );
+  function createGUI(page) {
+    const guiID = id(),
+      hooks = new Map(),
+      bindings = new Map();
+    const bus = new CommLinkHandler(`chessinsper-gui-${guiID}`, {
+      silentMode: true,
+      statusCheckInterval: 20,
+      singlePacketResponseWaitTime: 1000,
+      maxSendAttempts: 1,
+    });
+    let timer,
+      busy = false,
+      stopped = false,
+      panel;
+    const native = () => page.USERSCRIPT;
+    const compatible = (instance) =>
+      instance &&
+      typeof instance.sendMsgToEngine === "function" &&
+      typeof instance.engineMessageProcessor === "function" &&
+      typeof instance.displayMoves === "function" &&
+      typeof instance.Interface?.getMoveShapes === "function" &&
+      typeof instance.CommLink?.commands?.renderVisualsToSite === "function";
+    const profiles = () => [
+      ...new Set(
+        [...hooks.keys()].flatMap((instance) => Object.keys(instance.pV || {})),
+      ),
+    ];
+    const eligible = (instance, profile, fen = instance.currentFen) => {
+      const pv = instance.pV[profile];
+      return (
+        settings(profile).enabled &&
+        pv &&
+        !pv.useExternalChessEngine &&
+        !pv.useChess960 &&
+        (!pv.chessVariant || ["chess", "standard"].includes(pv.chessVariant)) &&
+        instance.boardDimensions?.width === 8 &&
+        instance.boardDimensions?.height === 8 &&
+        !!fen &&
+        (!pv.pendingCalculations?.find((c) => !c.finished)?.analyzedFen ||
+          pv.pendingCalculations.find((c) => !c.finished).analyzedFen === fen)
+      );
+    };
+    const wire = (object, name, fn) => {
+      object[name] =
+        typeof exportFunction === "function"
+          ? exportFunction(fn, page, { allowCrossOriginArguments: true })
+          : fn;
+    };
+    function profileState(instance, profile) {
+      const hook = hooks.get(instance),
+        cfg = settings(profile),
+        pv = instance.pV[profile];
+      let state = hook.profiles.get(profile);
+      const signature = root.ChessinsperCore.behaviorSignature(cfg);
+      if (!state || state.pv !== pv || state.signature !== signature) {
+        state?.metrics?.forEach((elem) => elem.remove());
+        state = {
+          pv,
+          signature,
+          settings: cfg,
+          runtime: root.ChessinsperCore.createRuntime(cfg, {
+            Chess: page.Chess,
+            id: `${instance.instanceID}:${profile}`,
+          }),
+          options: state?.options || {},
+          pool: new Map(),
+          fen: null,
+          selection: null,
+          choice: null,
+          context: {},
+          queried: false,
+        };
+        hook.profiles.set(profile, state);
+      }
+      state.settings = cfg;
+      state.runtime.settings.visualIntelligence = cfg.visualIntelligence;
+      return state;
+    }
+    function client(instance) {
+      return GM_listValues()
+        .filter((key) => key.startsWith(CLIENT_PREFIX))
+        .map((key) => GM_getValue(key))
+        .find(
+          (value) =>
+            value?.nativeInstanceID === instance.instanceID &&
+            value.guiID === guiID &&
+            Date.now() - value.at < 15000,
+        );
+    }
+    function registerClient(value) {
+      if (!value?.id || !value.nativeInstanceID) return { ok: false };
+      const instance = [...hooks.keys()].find(
+        (i) => i.instanceID === value.nativeInstanceID,
+      );
+      if (!instance || instance.instanceClosed) return { ok: false };
+      bindings.set(value.id, instance);
+      return { ok: true };
+    }
+    bus.registerListener(`chessinsper-gui-${guiID}`, async (packet) => {
+      const value = packet.data;
+      if (packet.command === "register") return registerClient(value);
+      const instance = bindings.get(value?.clientID);
+      if (
+        !instance ||
+        instance.instanceClosed ||
+        instance.instanceID !== value?.nativeInstanceID
+      )
+        return { ok: false };
+      if (packet.command === "confirmed") {
+        hooks
+          .get(instance)
+          .profiles.get(value.profile)
+          ?.runtime.recordMove(value);
+        return { ok: true };
+      }
+      if (packet.command === "recover") {
+        const fen = await instance.CommLink.commands.getFen();
+        if (fen && fen === instance.currentFen)
+          await instance.calculateBestMoves(fen, {
+            specificProfileName: value.profile,
+            skipValidityChecks: true,
+          });
+        return { ok: true };
+      }
+      if (packet.command === "newgame") {
+        const hook = hooks.get(instance);
+        hook.profiles.forEach((state) => {
+          state.signature = null;
+          state.selection = null;
+        });
+        return { ok: true };
+      }
+      return { ok: false };
+    });
+    async function context(instance, profile, fen) {
+      const target = client(instance);
+      if (!target) return {};
+      const result = await bus.send(
+        `chessinsper-client-${target.id}`,
+        "context",
+        {
+          fen,
+          profile,
+          nativeInstanceID: instance.instanceID,
+          playerColor: await instance.getPlayerColor(),
+        },
+      );
+      return result?.ok ? result.context : {};
+    }
+    async function plan(instance, profile, fen, originalSend, isCurrent) {
+      const state = profileState(instance, profile),
+        snapshot = await context(instance, profile, fen);
+      if (!isCurrent() || !eligible(instance, profile, fen)) return null;
+      state.context = snapshot;
+      const value = state.runtime.searchPlan(fen, snapshot),
+        options = state.options;
+      if (options.MultiPV) {
+        const count = Math.max(
+          options.MultiPV.min || 1,
+          Math.min(options.MultiPV.max || 20, value.multiPV),
+        );
+        state.pv.multiPV = count;
+        await originalSend.call(
+          instance,
+          `setoption name MultiPV value ${count}`,
+          profile,
+          true,
+          isCurrent,
+        );
+      }
+      if (options["Skill Level"])
+        await originalSend.call(
+          instance,
+          `setoption name Skill Level value ${options["Skill Level"].max ?? 20}`,
+          profile,
+          true,
+          isCurrent,
+        );
+      const elo = options.UCI_Elo;
+      if (elo && options.UCI_LimitStrength) {
+        const limit = value.strength >= elo.min && value.strength <= elo.max;
+        await originalSend.call(
+          instance,
+          `setoption name UCI_LimitStrength value ${limit}`,
+          profile,
+          true,
+          isCurrent,
+        );
+        if (limit)
+          await originalSend.call(
+            instance,
+            `setoption name UCI_Elo value ${value.strength}`,
+            profile,
+            true,
+            isCurrent,
+          );
+      } else if (elo)
+        await originalSend.call(
+          instance,
+          `setoption name UCI_Elo value ${Math.max(elo.min, Math.min(elo.max, value.strength))}`,
+          profile,
+          true,
+          isCurrent,
+        );
+      state.pv.searchDepth = value.depth;
+      return value;
+    }
+    function parseInfo(message, profile, fen, state) {
+      if (state.fen !== fen) {
+        state.fen = fen;
+        state.pool = new Map();
+        state.selection = null;
+      }
+      const pv = message
+        .match(/\bpv\s+(.+)$/)?.[1]
+        ?.trim()
+        .split(/\s+/);
+      if (!pv?.length || !/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(pv[0])) return;
+      const ranking = Number(message.match(/\bmultipv\s+(\d+)/)?.[1] || 1),
+        depth = Number(message.match(/\bdepth\s+(\d+)/)?.[1] || 0);
+      const old = state.pool.get(ranking);
+      if (old && old.depth > depth) return;
+      const cp = message.match(/\bscore\s+cp\s+(-?\d+)/),
+        mate = message.match(/\bscore\s+mate\s+(-?\d+)/);
+      const move = {
+        player: [pv[0].slice(0, 2), pv[0].slice(2, 4)],
+        playerPromotion: pv[0][4] || null,
+        opponent: pv[1] ? [pv[1].slice(0, 2), pv[1].slice(2, 4)] : [null, null],
+        opponentPromotion: pv[1]?.[4] || null,
+        cp: cp ? Number(cp[1]) : 0,
+        mate: mate ? Number(mate[1]) : null,
+        ranking,
+        depth,
+        pv,
+        profile,
+        fen,
+      };
+      state.pool.set(ranking, move);
+    }
+    function visible(state, fen, moves, ownTurn) {
+      const cfg = state.settings.visualIntelligence;
+      if (
+        !cfg.enabled ||
+        !cfg.arrowOpacity ||
+        (cfg.showOnlyOwnTurn && !ownTurn)
+      )
+        return [];
+      const board = new page.Chess(fen);
+      return moves
+        .filter(
+          (move, index) =>
+            (index === 0 ? cfg.bestMove : cfg.alternatives) &&
+            (cfg.pieceFilter === "all" ||
+              board.get(move.player[0])?.type === cfg.pieceFilter),
+        )
+        .slice(0, cfg.maxArrows);
+    }
+    async function render(instance, profile, state) {
+      if (
+        !eligible(instance, profile) ||
+        !state.selection ||
+        state.fen !== instance.currentFen
+      )
+        return;
+      const ownTurn =
+        instance.currentFen.split(" ")[1] === (await instance.getPlayerColor());
+      const moves = visible(state, state.fen, state.selection, ownTurn);
+      if (moves.length)
+        await hooks
+          .get(instance)
+          .original.displayMoves.call(instance, clone(moves), profile);
+      else {
+        instance.Interface.removeMarkings(profile, "Chessinsper visibility");
+        await hooks
+          .get(instance)
+          .original.renderVisuals([
+            { profileID: profile, category: "chessinsper-move" },
+          ]);
+      }
+      renderCoach(instance, profile, state);
+    }
+    function renderCoach(instance, profile, state) {
+      let elem = instance.instanceElem?.querySelector(
+        "[data-chessinsper-coach]",
+      );
+      if (!state.settings.coach.enabled) {
+        if (elem) elem.hidden = true;
+        return;
+      }
+      if (!elem && instance.instanceElem) {
+        elem = page.document.createElement("div");
+        elem.dataset.chessinsperCoach = "";
+        elem.className = "instance-chessinsper-coach";
+        instance.instanceElem.append(elem);
+      }
+      const report = state.runtime.coachReport(
+        state.fen,
+        state.selection || [],
+      );
+      if (elem) {
+        elem.hidden = false;
+        elem.textContent = report
+          ? `Coach · ${report.move}\n${report.alternatives.length ? "Alternativas: " + report.alternatives.join(", ") : ""}${report.threat ? "\nResposta prevista: " + report.threat : ""}`
+          : "Coach · aguardando análise";
+      }
+    }
+    async function metrics(instance, profile, state) {
+      const visual = state.settings.visualIntelligence;
+      state.metrics?.forEach((elem) => elem.remove());
+      state.metrics = [];
+      if (
+        !visual.enabled ||
+        !instance.BoardDrawer ||
+        (visual.showOnlyOwnTurn &&
+          instance.currentFen.split(" ")[1] !==
+            (await instance.getPlayerColor()))
+      ) {
+        await hooks
+          .get(instance)
+          .original.renderVisuals([
+            { category: "chessinsper-metric", profileID: profile },
+          ]);
+        return;
+      }
+      const shapes = root.ChessinsperAddonMetrics(
+        state.runtime,
+        instance.currentFen,
+        await instance.getPlayerColor(),
+      );
+      state.metrics = shapes
+        .map((shape) =>
+          instance.BoardDrawer.createShape(
+            shape.shapeType,
+            shape.shapeSquare,
+            shape.shapeConfig,
+          ),
+        )
+        .filter(Boolean);
+      if (
+        await hooks
+          .get(instance)
+          .original.getConfigValue.call(
+            instance,
+            "renderOnExternalSite",
+            profile,
+          )
+      )
+        await hooks.get(instance).original.renderVisuals(
+          shapes.length
+            ? shapes.map((shape) => ({
+                ...shape,
+                category: "chessinsper-metric",
+                profileID: profile,
+              }))
+            : [{ category: "chessinsper-metric", profileID: profile }],
+        );
+    }
+    function attach(instance) {
+      if (hooks.has(instance) || !compatible(instance)) return;
+      const original = {};
+      for (const name of [
+        "getConfigValue",
+        "sendMsgToEngine",
+        "engineMessageProcessor",
+        "displayMoves",
+        "renderMetric",
+        "startNewMatch",
+        "close",
+      ])
+        original[name] = instance[name];
+      original.renderVisuals = instance.CommLink.commands.renderVisualsToSite;
+      original.getMoveVisualSettings = instance.Interface.getMoveVisualSettings;
+      original.getMoveShapes = instance.Interface.getMoveShapes;
+      const hook = {
+        original,
+        profiles: new Map(),
+        markerAt: 0,
+        enabled: new Set(),
+      };
+      hooks.set(instance, hook);
+      wire(instance, "getConfigValue", async function (key, profile) {
+        const name = typeof profile === "object" ? profile?.name : profile;
+        if (name && eligible(instance, name)) {
+          const cfg = settings(name).visualIntelligence;
+          const values = {
+            arrowOpacity: cfg.arrowOpacity,
+            primaryArrowColorHex: cfg.colors.best,
+            secondaryArrowColorHex: cfg.colors.alt,
+            opponentArrowColorHex: cfg.colors.response,
+            showOpponentMoveGuess: cfg.threats,
+            showOpponentMoveGuessConstantly: cfg.threats,
+          };
+          if (Object.hasOwn(values, key)) return values[key];
+        }
+        return original.getConfigValue.call(instance, key, profile);
+      });
+      wire(
+        instance,
+        "sendMsgToEngine",
+        async function (message, profile, dynamic, isCurrent = () => true) {
+          if (
+            /^go\b/.test(message) &&
+            typeof profile === "string" &&
+            eligible(instance, profile)
+          ) {
+            const request = instance.pV[profile].pendingCalculations.find(
+                (c) => !c.finished,
+              ),
+              fen = request?.analyzedFen || instance.currentFen;
+            if (fen === instance.currentFen) {
+              const search = await plan(
+                instance,
+                profile,
+                fen,
+                original.sendMsgToEngine,
+                isCurrent,
+              );
+              if (!isCurrent()) return false;
+              if (search)
+                message = `go depth ${search.depth}${message.includes(" searchmoves ") ? " searchmoves " + message.split(" searchmoves ")[1] : ""}`;
+            }
+          }
+          return original.sendMsgToEngine.call(
+            instance,
+            message,
+            profile,
+            dynamic,
+            isCurrent,
+          );
+        },
+      );
+      wire(
+        instance,
+        "engineMessageProcessor",
+        async function (message, profile) {
+          const pv = instance.pV[profile];
+          if (!pv)
+            return original.engineMessageProcessor.call(
+              instance,
+              message,
+              profile,
+            );
+          const state = profileState(instance, profile),
+            request = pv.pendingCalculations.find((c) => !c.finished);
+          const fen = request?.analyzedFen || request?.fen;
+          if (/^option name /.test(message)) {
+            const name = message.match(/^option name (.+?) type /)?.[1];
+            if (name)
+              state.options[name] = {
+                min: Number(message.match(/\bmin (-?\d+)/)?.[1] || 0),
+                max: Number(message.match(/\bmax (-?\d+)/)?.[1] || 0),
+              };
+          }
+          if (
+            /^info /.test(message) &&
+            fen &&
+            request?.fen === instance.currentFen &&
+            eligible(instance, profile, fen)
+          )
+            parseInfo(message, profile, fen, state);
+          const final = /^bestmove\s+[a-h][1-8][a-h][1-8]/.test(message);
+          const pool = state.pool;
+          await original.engineMessageProcessor.call(
+            instance,
+            message,
+            profile,
+          );
+          if (
+            !final ||
+            !request ||
+            request.stopRequested ||
+            request.fen !== instance.currentFen ||
+            fen !== instance.currentFen ||
+            !eligible(instance, profile, fen) ||
+            instance.pV[profile] !== pv
+          )
+            return;
+          const candidates = [...pool.values()];
+          if (!candidates.length) return;
+          const ownTurn =
+            fen.split(" ")[1] === (await instance.getPlayerColor());
+          const result = ownTurn
+            ? state.runtime.chooseMoves(fen, candidates, {
+                ...state.context,
+                playerColor: await instance.getPlayerColor(),
+                repertoireMoves: (
+                  instance.openingBooks?.get(profile)?.getMoves(fen) || []
+                ).map((m) => m.from + m.to + (m.promotion || "")),
+              })
+            : { moves: candidates, choice: null };
+          state.selection = result.moves;
+          state.choice = result.choice;
+          state.fen = fen;
+          await render(instance, profile, state);
+          await metrics(instance, profile, state);
+          const target = client(instance);
+          if (target && result.choice) {
+            const best =
+              candidates.find((m) => m.ranking === 1) || candidates[0];
+            await bus.send(`chessinsper-client-${target.id}`, "move", {
+              ...result.choice,
+              profile,
+              settings: state.settings,
+              fen,
+              nativeInstanceID: instance.instanceID,
+              bestCp: best.cp,
+              bestMate: best.mate,
+              playerColor: await instance.getPlayerColor(),
+            });
+          }
+        },
+      );
+      wire(instance, "displayMoves", async function (moves, profile, ...rest) {
+        if (!eligible(instance, profile))
+          return original.displayMoves.call(instance, moves, profile, ...rest);
+        const state = profileState(instance, profile);
+        if (state.selection && state.fen === instance.currentFen)
+          return render(instance, profile, state);
+      });
+      wire(instance, "renderMetric", async function (fen, profile) {
+        const result = await original.renderMetric.call(instance, fen, profile);
+        if (eligible(instance, profile, fen))
+          await metrics(instance, profile, profileState(instance, profile));
+        return result;
+      });
+      wire(
+        instance.Interface,
+        "getMoveVisualSettings",
+        function (move, index, total, options) {
+          const visual = original.getMoveVisualSettings.call(
+            instance.Interface,
+            move,
+            index,
+            total,
+            options,
+          );
+          if (!visual || !eligible(instance, move.profile)) return visual;
+          const cfg = settings(move.profile).visualIntelligence;
+          return {
+            ...visual,
+            shapeConfig: {
+              ...visual.shapeConfig,
+              lineWidth:
+                (visual.shapeConfig.lineWidth *
+                  cfg.arrowScale *
+                  cfg.lineWidth) /
+                2,
+              arrowheadWidth:
+                visual.shapeConfig.arrowheadWidth * cfg.arrowScale,
+              arrowheadHeight:
+                visual.shapeConfig.arrowheadHeight * cfg.arrowScale,
+              startOffset: visual.shapeConfig.startOffset * cfg.arrowScale,
+            },
+          };
+        },
+      );
+      wire(instance.Interface, "getMoveShapes", function (move, index, ctx) {
+        const shapes = original.getMoveShapes.call(
+          instance.Interface,
+          move,
+          index,
+          ctx,
+        );
+        if (move.chessinsperAnnotation && eligible(instance, move.profile))
+          shapes.push({
+            shapeType: "rectangle",
+            shapeSquare: move.player[0],
+            shapeConfig: {
+              style: `fill:none;stroke:${settings(move.profile).visualIntelligence.colors.best};stroke-width:0.6%;rx:40%;ry:40%;`,
+            },
+          });
+        return shapes;
+      });
+      wire(
+        instance.CommLink.commands,
+        "renderVisualsToSite",
+        async function (markings) {
+          return original.renderVisuals(
+            (markings || []).map((mark) =>
+              mark.category === "move" && eligible(instance, mark.profileID)
+                ? { ...mark, category: "chessinsper-move" }
+                : mark,
+            ),
+          );
+        },
+      );
+      if (typeof original.startNewMatch === "function")
+        wire(instance, "startNewMatch", function (...args) {
+          hook.profiles.forEach((state) => {
+            state.signature = null;
+            state.selection = null;
+            state.pool = new Map();
+          });
+          return original.startNewMatch.apply(instance, args);
+        });
+      if (typeof original.close === "function")
+        wire(instance, "close", function (...args) {
+          detach(instance);
+          return original.close.apply(instance, args);
+        });
+    }
+    function detach(instance) {
+      const hook = hooks.get(instance);
+      if (!hook) return;
+      hook.profiles.forEach((state) =>
+        state.metrics?.forEach((elem) => elem.remove()),
+      );
+      for (const [name, fn] of Object.entries(hook.original))
+        if (
+          [
+            "getConfigValue",
+            "sendMsgToEngine",
+            "engineMessageProcessor",
+            "displayMoves",
+            "renderMetric",
+            "startNewMatch",
+            "close",
+          ].includes(name)
+        )
+          instance[name] = fn;
+      instance.Interface.getMoveVisualSettings =
+        hook.original.getMoveVisualSettings;
+      instance.Interface.getMoveShapes = hook.original.getMoveShapes;
+      instance.CommLink.commands.renderVisualsToSite =
+        hook.original.renderVisuals;
+      hooks.delete(instance);
+    }
+    async function changed(profile) {
+      for (const instance of hooks.keys()) {
+        if (!instance.pV[profile]) continue;
+        const hook = hooks.get(instance),
+          enabled = settings(profile).enabled;
+        if (!enabled) {
+          const state = hook.profiles.get(profile);
+          state?.metrics?.forEach((elem) => elem.remove());
+          instance.instanceElem
+            ?.querySelector("[data-chessinsper-coach]")
+            ?.remove();
+          await hook.original.renderVisuals([
+            { category: "chessinsper-move", profileID: profile },
+          ]);
+          await hook.original.renderVisuals([
+            { category: "chessinsper-metric", profileID: profile },
+          ]);
+          hook.profiles.delete(profile);
+          hook.enabled.delete(profile);
+          if (typeof instance.createAndLoadSpecificEngine === "function")
+            await instance.createAndLoadSpecificEngine(profile);
+          continue;
+        }
+        hook.enabled.add(profile);
+        const state = profileState(instance, profile);
+        if (state.selection) {
+          await render(instance, profile, state);
+          await metrics(instance, profile, state);
+        } else if (instance.currentFen)
+          await instance.calculateBestMoves(instance.currentFen, {
+            specificProfileName: profile,
+            skipValidityChecks: true,
+          });
+      }
+    }
+    async function pulse() {
+      if (busy || stopped) return;
+      busy = true;
+      try {
+        if (
+          !native()?.getValue ||
+          !Array.isArray(page.AcasInstances) ||
+          !page.Chess
+        ) {
+          panel?.status(
+            "Ative o userscript A.C.A.S oficial e recarregue este painel.",
+          );
+          return;
+        }
+        panel?.status("A.C.A.S oficial conectado · Chessinsper complementar");
+        for (const entry of page.AcasInstances) {
+          const instance = entry.instance;
+          if (!compatible(instance)) continue;
+          attach(instance);
+          const hook = hooks.get(instance),
+            names = Object.keys(instance.pV || {});
+          for (const profile of names) {
+            const enabled = settings(profile).enabled;
+            if (enabled) {
+              const state = profileState(instance, profile);
+              if (instance.pV[profile].engineSettingsReady && !state.queried) {
+                state.queried = true;
+                await hook.original.sendMsgToEngine.call(
+                  instance,
+                  "uci",
+                  profile,
+                  true,
+                );
+              }
+              if (!hook.enabled.has(profile)) {
+                hook.enabled.add(profile);
+                await changed(profile);
+              }
+            } else if (hook.enabled.has(profile)) await changed(profile);
+          }
+          if (
+            names.some((name) => settings(name).enabled) &&
+            Date.now() - hook.markerAt > 3000 &&
+            instance.currentFen
+          ) {
+            hook.markerAt = Date.now();
+            await hook.original.renderVisuals([
+              {
+                profileID: "ChessinsperAddon",
+                category: "chessinsper-link",
+                shapeType: "text",
+                shapeSquare: "a1",
+                shapeConfig: {
+                  text:
+                    LINK_PREFIX +
+                    guiID +
+                    ":" +
+                    instance.instanceID +
+                    ":" +
+                    Date.now(),
+                  style: "opacity:0;pointer-events:none;",
+                },
+              },
+            ]);
+          }
+        }
+        for (const instance of hooks.keys())
+          if (
+            instance.instanceClosed ||
+            !page.AcasInstances.some((entry) => entry.instance === instance)
+          )
+            detach(instance);
+        panel?.sync();
+      } catch (error) {
+        panel?.status(
+          "A integração aguarda o painel do A.C.A.S. Recarregue se este aviso persistir.",
+        );
+        console.warn("Chessinsper addon:", error);
+      } finally {
+        busy = false;
+      }
+    }
+    const services = {
+      settings,
+      save: async (profile, value) => {
+        save(profile, value);
+        await changed(profile);
+      },
+      profiles,
+      native,
+      guiID,
+    };
+    return {
+      start() {
+        panel = root.ChessinsperAddonPanel.create(services, page);
+        panel.initialize();
+        timer = root.setInterval(() => void pulse(), 500);
+        void pulse();
+      },
+      stop() {
+        stopped = true;
+        root.clearInterval(timer);
+        bus.kill();
+        [...hooks.keys()].forEach(detach);
+        panel?.stop();
+      },
+      status: () => ({
+        version: VERSION,
+        guiID,
+        instances: hooks.size,
+        connected: !!native()?.getValue,
+      }),
+    };
+  }
+  root.ChessinsperAddon = {
+    VERSION,
+    PROFILE_PREFIX,
+    CLIENT_PREFIX,
+    LINK_PREFIX,
+    settings,
+    save,
+    id,
+    createGUI,
+  };
+})(globalThis);
+
+
+// Component: ChessinsperAddonSite.js
+/* Chessinsper execution and lifecycle adapter. It does not load an engine or draw a board overlay. */
+(function (root) {
+  "use strict";
+  const addon = root.ChessinsperAddon;
+  const visible = (elem) =>
+    elem?.isConnected &&
+    elem.getClientRects().length &&
+    root.getComputedStyle(elem).visibility !== "hidden";
+  function boardElement(document) {
+    for (const selector of [
+      "wc-chess-board",
+      "chess-board",
+      ".board-layout-chessboard .board",
+      "cg-board",
+    ]) {
+      const board = [...document.querySelectorAll(selector)].find(visible);
+      if (board) return board;
+    }
+    return null;
+  }
+  function orientation(board, fallback = "w") {
+    if (
+      board?.classList.contains("flipped") ||
+      board?.closest(".orientation-black") ||
+      board?.parentElement?.querySelector(
+        "coords.files.black, coords.side.black",
+      )
+    )
+      return "b";
+    if (board?.closest(".orientation-white")) return "w";
+    return fallback;
+  }
+  function placement(board, side = "w") {
+    if (!board) return null;
+    const rows = Array.from({ length: 8 }, () => Array(8).fill(null)),
+      rect = board.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    const pieces = [...board.querySelectorAll(".piece, piece")].filter(
+      (e) => !e.classList.contains("ghost"),
+    );
+    if (!pieces.length) return null;
+    for (const piece of pieces) {
+      let file, rank, code;
+      const token = [...piece.classList].find((c) => /^[wb][prnbqk]$/.test(c));
+      const square = [...piece.classList].find((c) =>
+        /^square-[1-8][1-8]$/.test(c),
+      );
+      if (token && square) {
+        code = token[0] === "w" ? token[1].toUpperCase() : token[1];
+        file = Number(square[7]) - 1;
+        rank = Number(square[8]) - 1;
+      } else {
+        const type = ["pawn", "knight", "bishop", "rook", "queen", "king"].find(
+          (c) => piece.classList.contains(c),
+        );
+        const short = [...piece.classList].find((c) =>
+          /^[pnbrqk]-piece$/.test(c),
+        );
+        if (
+          (!type && !short) ||
+          (!piece.classList.contains("white") &&
+            !piece.classList.contains("black"))
+        )
+          return null;
+        const letter = short
+          ? short[0]
+          : {
+              pawn: "p",
+              knight: "n",
+              bishop: "b",
+              rook: "r",
+              queen: "q",
+              king: "k",
+            }[type];
+        code = piece.classList.contains("white")
+          ? letter.toUpperCase()
+          : letter;
+        const style = root.getComputedStyle(piece),
+          matrix = new root.DOMMatrix(style.transform);
+        let x = matrix.e / (rect.width / 8),
+          y = matrix.f / (rect.height / 8);
+        if (style.transform === "none") {
+          const p = piece.getBoundingClientRect();
+          x = (p.left - rect.left) / (rect.width / 8);
+          y = (p.top - rect.top) / (rect.height / 8);
+        }
+        if (
+          Math.abs(x - Math.round(x)) > 0.2 ||
+          Math.abs(y - Math.round(y)) > 0.2
+        )
+          return null;
+        file = Math.round(x);
+        rank = 7 - Math.round(y);
+        if (side === "b") {
+          file = 7 - file;
+          rank = 7 - rank;
+        }
+      }
+      if (file < 0 || file > 7 || rank < 0 || rank > 7 || rows[rank][file])
+        return null;
+      rows[rank][file] = code;
+    }
+    return rows
+      .reverse()
+      .map((row) => {
+        let value = "",
+          spaces = 0;
+        for (const piece of row) {
+          if (!piece) spaces++;
+          else {
+            if (spaces) value += spaces;
+            spaces = 0;
+            value += piece;
+          }
+        }
+        if (spaces) value += spaces;
+        return value;
+      })
+      .join("/");
+  }
+  function create(page) {
+    const clientID = addon.id(),
+      domain = location.hostname.replace(/^www\./, ""),
+      controllers = new Map();
+    const bus = new CommLinkHandler(`chessinsper-client-${clientID}`, {
+      silentMode: true,
+      statusCheckInterval: 20,
+      singlePacketResponseWaitTime: 1200,
+      maxSendAttempts: 1,
+    });
+    let markerAt = 0;
+    let guiID = null,
+      nativeID = null,
+      nativeFen = null,
+      playerColor = "w",
+      activeProfile = null,
+      timer = null,
+      busy = false,
+      leaseSince = 0,
+      ready = false,
+      lastTick = 0,
+      lastRegistered = null,
+      stopped = false,
+      lastExecution = null;
+    const clientKey = addon.CLIENT_PREFIX + clientID;
+    function getFen() {
+      const board = boardElement(document),
+        basic = placement(board, orientation(board, playerColor));
+      if (!basic || !nativeFen) return null;
+      return basic + " " + nativeFen.split(" ").slice(1).join(" ");
+    }
+    function owns(profile, claim = false) {
+      if (
+        profile !== activeProfile ||
+        !nativeID ||
+        Date.now() - markerAt > 12000
+      )
+        return false;
+      const key = root.ChessinsperBehavior.key(domain, profile) + ":owner",
+        owner = GM_getValue(key),
+        time = Date.now();
+      if (owner?.id !== clientID && owner?.until > time) return false;
+      if (owner?.id !== clientID) {
+        if (!claim) return false;
+        leaseSince = time;
+        const entry = controllers.get(profile);
+        if (entry) entry.controller = makeController(profile, entry.settings);
+      }
+      GM_setValue(key, { id: clientID, until: time + 10000 });
+      return time - leaseSince >= 1000 && GM_getValue(key)?.id === clientID;
+    }
+    function release(profile) {
+      if (!profile) return;
+      const key = root.ChessinsperBehavior.key(domain, profile) + ":owner";
+      if (GM_getValue(key)?.id === clientID) GM_deleteValue(key);
+    }
+    function makeController(profile, cfg) {
+      const key = root.ChessinsperBehavior.key(domain, profile);
+      return root.ChessinsperBehavior.create(cfg, {
+        read: () => GM_getValue(key),
+        write: (value) => {
+          if (GM_getValue(key + ":owner")?.id === clientID)
+            GM_setValue(key, value);
+        },
+      });
+    }
+    function entry(profile) {
+      const cfg = addon.settings(profile);
+      let value = controllers.get(profile);
+      if (!value) {
+        value = {
+          settings: cfg,
+          controller: makeController(profile, cfg),
+          firstFen: null,
+          lastFen: null,
+          fenAt: Date.now(),
+          lastIdleAt: 0,
+        };
+        controllers.set(profile, value);
+      }
+      value.settings = cfg;
+      value.controller.configure(cfg);
+      return value;
+    }
+    function clockContext() {
+      const text =
+        document
+          .querySelector(
+            ".clock-bottom .clock-time-monospace, .clock-bottom, .rclock-bottom .time",
+          )
+          ?.textContent.trim() || "";
+      const match = text.match(/^(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)$/);
+      const clockSeconds = match
+        ? Number(match[1] || 0) * 3600 +
+          Number(match[2]) * 60 +
+          Number(match[3])
+        : null;
+      const timeControl =
+        document
+          .querySelector(
+            '[data-cy="time-control"], .time-control, .game-controls-clock',
+          )
+          ?.textContent.trim() || null;
+      const rating = document
+        .querySelector(
+          '.player-top .user-tagline-rating, .player-top [data-cy="user-rating"], .ruser-top .rating',
+        )
+        ?.textContent.match(/\b\d{3,4}\b/);
+      return {
+        playerColor,
+        clockSeconds,
+        timeControl,
+        opponentRating: rating ? Number(rating[0]) : null,
+      };
+    }
+    function match(fen) {
+      const key = `ChessinsperAddon.Match:${domain}:${location.pathname}`;
+      let value = GM_getValue(key);
+      const routeID =
+        location.pathname.match(/\/game\/(?:live|daily)\/(\d+)/)?.[1] ||
+        (/lichess\.org$/.test(domain)
+          ? location.pathname.match(/^\/([a-zA-Z0-9]{8,12})(?:\/|$)/)?.[1]
+          : null);
+      const basic = fen?.split(" ")[0];
+      if (
+        !value ||
+        value.route !== location.pathname ||
+        (value.ended && basic && basic !== value.fen?.split(" ")[0])
+      ) {
+        value = {
+          id: routeID ? `${domain}:${routeID}` : `${domain}:${addon.id()}`,
+          route: location.pathname,
+          fen,
+          ended: false,
+        };
+        GM_setValue(key, value);
+        input.reset();
+        controllers.forEach((v) => {
+          v.firstFen = null;
+        });
+        if (guiID)
+          void bus.send(`chessinsper-gui-${guiID}`, "newgame", {
+            clientID,
+            nativeInstanceID: nativeID,
+          });
+      }
+      const pageState = root.ChessinsperBehavior.readPage(
+        document,
+        playerColor,
+      );
+      if (value.fen !== fen || value.ended !== pageState.gameOver)
+        GM_setValue(key, {
+          ...value,
+          fen: fen || value.fen,
+          ended: pageState.gameOver,
+        });
+      return { gameId: value.id, ...pageState };
+    }
+    function snapshot() {
+      const fen = getFen();
+      return {
+        ...clockContext(),
+        ...match(fen),
+        fen,
+        queueAvailable: !!root.ChessinsperBehavior.readPage(
+          document,
+          playerColor,
+        ).queueButton,
+      };
+    }
+    async function recover(source) {
+      input.cancel();
+      if (
+        !activeProfile ||
+        !owns(activeProfile) ||
+        !addon.settings(activeProfile).enabled
+      )
+        return;
+      const value = entry(activeProfile);
+      value.controller.recover(source);
+      input.reset();
+      if (guiID && nativeID)
+        await bus.send(`chessinsper-gui-${guiID}`, "recover", {
+          clientID,
+          nativeInstanceID: nativeID,
+          profile: activeProfile,
+        });
+    }
+    const input = root.ChessinsperAutomation.create({
+      getBoard: () => boardElement(document),
+      getFen,
+      getOrientation: () => orientation(boardElement(document), playerColor),
+      enabled: (profile, planned) => {
+        const cfg = addon.settings(profile);
+        return (
+          cfg.enabled &&
+          cfg.automation.enabled &&
+          owns(profile) &&
+          entry(profile).controller.canMove() &&
+          !root.ChessinsperBehavior.readPage(document, playerColor).gameOver &&
+          (!planned ||
+            root.ChessinsperCore.behaviorSignature(cfg) ===
+              root.ChessinsperCore.behaviorSignature(planned))
+        );
+      },
+      persona: (profile) => entry(profile).controller.context().hardwarePersona,
+      onConfirmed: (packet) => {
+        entry(packet.profile).controller.recordMove(packet);
+        if (guiID)
+          void bus.send(`chessinsper-gui-${guiID}`, "confirmed", {
+            ...packet,
+            clientID,
+            nativeInstanceID: nativeID,
+            role: "own",
+          });
+      },
+    });
+    const supervisor = root.ChessinsperBehavior.createSupervisor({
+      tick: () => pulse(true),
+      cancel: () => input.cancel(),
+      checkpoint: () =>
+        controllers.forEach((value) => value.controller.checkpoint()),
+      recover: (source) => void recover(source),
+    });
+    bus.registerListener(`chessinsper-client-${clientID}`, (packet) => {
+      const data = packet.data;
+      if (!data || data.nativeInstanceID !== nativeID || !data.profile)
+        return { ok: false };
+      nativeFen = data.fen;
+      playerColor = data.playerColor || playerColor;
+      const value = entry(data.profile),
+        current = getFen();
+      if (
+        !value.settings.enabled ||
+        !current ||
+        current.split(" ")[0] !== data.fen?.split(" ")[0]
+      )
+        return { ok: false, reason: "position-changed" };
+      if (packet.command === "context") {
+        if (owns(data.profile)) value.controller.observe(snapshot());
+        return {
+          ok: true,
+          context: { ...clockContext(), ...value.controller.context() },
+        };
+      }
+      if (packet.command === "move") {
+        if (!owns(data.profile)) return { ok: false, reason: "inactive-tab" };
+        value.controller.observe(snapshot());
+        value.controller.recordAnalysis(data);
+        if (!value.controller.canMove()) return { ok: true, reason: "paused" };
+        if (value.settings.automation.afterUser) {
+          const key = current.split(" ").slice(0, 2).join(" ");
+          if (!value.firstFen) value.firstFen = key;
+          if (value.firstFen === key) return { ok: true, reason: "after-user" };
+        }
+        void input.run(data).then((result) => {
+          lastExecution = result;
+        });
+        return { ok: true };
+      }
+      return { ok: false };
+    });
+    function queueAndIdle(value) {
+      const cfg = value.settings,
+        c = value.controller,
+        s = snapshot(),
+        was = c.canMove();
+      c.observe(s);
+      if (!was && c.canMove()) void recover("retomada da sessão");
+      const key = root.ChessinsperBehavior.key(domain, activeProfile),
+        command = GM_getValue(key + ":command");
+      if (command?.id) {
+        if (command.type === "pause") {
+          c.pause(true);
+          input.cancel();
+        }
+        if (command.type === "resume") {
+          c.pause(false);
+          void recover("retomada manual");
+        }
+        if (command.type === "reset") {
+          c.resetSession();
+          void recover("nova sessão");
+        }
+        GM_deleteValue(key + ":command");
+      }
+      if (!c.canMove()) input.cancel();
+      if (
+        c.queueDecision().allowed &&
+        cfg.automation.enabled &&
+        !input.isActive()
+      ) {
+        const live = addon.settings(activeProfile),
+          state = root.ChessinsperBehavior.readPage(document, playerColor);
+        if (
+          live.enabled &&
+          live.automation.enabled &&
+          live.session.autoQueue &&
+          owns(activeProfile) &&
+          state.gameOver &&
+          state.queueButton
+        ) {
+          c.queueAttempt();
+          state.queueButton.click();
+        }
+      }
+      if (c.canResign() && cfg.automation.enabled && !input.isActive()) {
+        const confirming = c.status().resignStage === "confirm";
+        const selector = confirming
+          ? 'button[data-cy="confirm-resign"], [data-cy="resign-confirmation"] button, .resign-confirmation button, button.confirm-resign'
+          : '[data-cy="resign-button"], .resign-button-component button, button.resign';
+        const button = [...document.querySelectorAll(selector)].find(
+          (e) =>
+            visible(e) &&
+            !e.disabled &&
+            (!confirming ||
+              /^(?:resign|abandonar|desistir|confirm(?:ar)?(?: resignation)?|yes|sim)$/i.test(
+                e.textContent || e.getAttribute("aria-label") || "",
+              )),
+        );
+        if (button && !s.gameOver && owns(activeProfile)) {
+          c.resignAttempt(confirming);
+          button.click();
+        }
+      }
+      const time = Date.now();
+      if (value.lastFen !== s.fen) {
+        value.lastFen = s.fen;
+        value.fenAt = time;
+      }
+      if (
+        cfg.idleMouse.enabled &&
+        cfg.automation.enabled &&
+        c.canMove() &&
+        !input.isActive() &&
+        time - value.fenAt > cfg.idleMouse.triggerAfterMs &&
+        time - value.lastIdleAt > 1200 &&
+        Math.random() < cfg.idleMouse.actionChance
+      ) {
+        value.lastIdleAt = time;
+        const board = boardElement(document),
+          rect = board?.getBoundingClientRect();
+        if (rect?.width)
+          board.dispatchEvent(
+            new MouseEvent("mousemove", {
+              bubbles: true,
+              buttons: 0,
+              clientX: rect.left + rect.width * (0.2 + Math.random() * 0.6),
+              clientY: rect.top + rect.height * (0.2 + Math.random() * 0.6),
+            }),
+          );
+      }
+    }
+    async function pulse(fromSupervisor = false) {
+      if (busy || stopped || Date.now() - lastTick < 400) return;
+      busy = true;
+      lastTick = Date.now();
+      try {
+        const marker = [...document.querySelectorAll("svg text")].find((e) =>
+          e.textContent.startsWith(addon.LINK_PREFIX),
+        );
+        if (marker) {
+          const [gui, native, timestamp] = marker.textContent
+            .slice(addon.LINK_PREFIX.length)
+            .split(":");
+          markerAt = Number(timestamp) || 0;
+          if (gui !== guiID || native !== nativeID) {
+            guiID = gui;
+            nativeID = native;
+            nativeFen = null;
+            lastRegistered = null;
+            input.reset();
+          }
+        }
+        if (Date.now() - markerAt > 12000) {
+          input.cancel();
+          ready = false;
+        }
+        const enabled = GM_listValues()
+          .filter((key) => key.startsWith(addon.PROFILE_PREFIX))
+          .map((key) => key.slice(addon.PROFILE_PREFIX.length))
+          .filter((profile) => addon.settings(profile).enabled);
+        const preferred = GM_getValue(
+          "ChessinsperAddon.SelectedProfile",
+          "default",
+        );
+        const next =
+          enabled.includes(preferred) &&
+          addon.settings(preferred).automation.enabled
+            ? preferred
+            : enabled.find(
+                (profile) => addon.settings(profile).automation.enabled,
+              ) ||
+              enabled[0] ||
+              null;
+        if (next !== activeProfile) {
+          if (activeProfile && owns(activeProfile)) {
+            entry(activeProfile).controller.configure(
+              addon.settings(activeProfile),
+            );
+            entry(activeProfile).controller.checkpoint();
+          }
+          input.cancel();
+          release(activeProfile);
+          activeProfile = next;
+          leaseSince = Date.now();
+          ready = false;
+        }
+        const value = next ? entry(next) : null;
+        if (value?.settings.afk.enabled) supervisor.start(value.settings.afk);
+        else if (supervisor.isActive()) supervisor.stop();
+        if (nativeID && guiID && value) {
+          const owned = owns(next, true);
+          GM_setValue(clientKey, {
+            id: clientID,
+            nativeInstanceID: nativeID,
+            guiID,
+            domain,
+            at: Date.now(),
+            ready: owned,
+          });
+          if (lastRegistered !== nativeID) {
+            lastRegistered = nativeID;
+            await bus.send(`chessinsper-gui-${guiID}`, "register", {
+              id: clientID,
+              nativeInstanceID: nativeID,
+            });
+          }
+          if (owned && !ready) {
+            ready = true;
+            void recover("conexão ao A.C.A.S");
+          }
+          if (owned && nativeFen) queueAndIdle(value);
+        }
+      } catch (error) {
+        console.warn("Chessinsper site adapter:", error);
+      } finally {
+        busy = false;
+      }
+    }
+    return {
+      start() {
+        timer = root.setInterval(() => void pulse(), 500);
+        void pulse();
+      },
+      stop() {
+        stopped = true;
+        root.clearInterval(timer);
+        input.cancel();
+        supervisor.stop();
+        release(activeProfile);
+        GM_deleteValue(clientKey);
+        bus.kill();
+      },
+      status: () => ({
+        clientID,
+        nativeInstanceID: nativeID,
+        guiID,
+        profile: activeProfile,
+        ready,
+        lastExecution,
+      }),
+    };
+  }
+  root.ChessinsperAddonSite = { create, boardElement, placement, orientation };
+})(globalThis);
+
+
+// Component: ChessinsperAddonMetrics.js
+(function (root) {
+  const ChessinsperCore = root.ChessinsperCore;
+  // Chessinsper computes board information; A.C.A.S UniversalBoardDrawer renders every descriptor.
+  root.ChessinsperAddonMetrics = function (runtime, fen, playerColor) {
+    const cfg = {
+      ...runtime.settings.visualIntelligence,
+      hanging:
+        runtime.settings.visualIntelligence.hanging ||
+        (runtime.settings.coach?.enabled &&
+          runtime.settings.coach.showHangingPieces),
+    };
+    const side = String(playerColor || fen.split(" ")[1]).toLowerCase()[0],
+      enemy = side === "w" ? "b" : "w";
+    if (!cfg.enabled || (cfg.showOnlyOwnTurn && fen.split(" ")[1] !== side))
+      return [];
+    const a = ChessinsperCore.analyze(fen),
+      colors = cfg.colors,
+      shapes = [];
+    const fill = (sq, color, opacity = 1) =>
+      shapes.push({
+        shapeType: "rectangle",
+        shapeSquare: sq,
+        shapeConfig: {
+          style: `fill:${color};opacity:${cfg.markerOpacity * opacity};stroke:none;`,
+        },
+      });
+    const mark = (sq, color, text) =>
+      shapes.push({
+        shapeType: "text",
+        shapeSquare: sq,
+        shapeConfig: {
+          text,
+          size: 1.1 * cfg.markerScale,
+          style: `fill:${color};opacity:${Math.min(1, cfg.markerOpacity + 0.35)};stroke:#111;stroke-width:.035;paint-order:stroke;`,
+          position: [0.55, 0.55],
+        },
+      });
+    if (cfg.ownVision)
+      for (const sq of a.attack[side].keys()) fill(sq, colors.own);
+    if (cfg.enemyVision)
+      for (const sq of a.attack[enemy].keys()) fill(sq, colors.enemy);
+    if (cfg.contested) a.contested.forEach((sq) => fill(sq, colors.contested));
+    if (cfg.safeSquares)
+      a.safe[side].forEach((sq) => fill(sq, colors.safe, 0.7));
+    if (cfg.neutralSquares)
+      a.neutral.forEach((sq) => fill(sq, colors.neutral, 0.35));
+    if (cfg.controlIntensity)
+      for (const c of a.squareControl) {
+        const difference = c[side] - c[enemy];
+        if (difference)
+          fill(
+            c.sq,
+            difference > 0 ? colors.own : colors.enemy,
+            Math.min(1.5, 0.4 + Math.abs(difference) * 0.25),
+          );
+      }
+    if (cfg.attackerDefenderBalance)
+      for (const c of a.squareControl.filter((c) => c[side] && c[enemy]))
+        mark(
+          c.sq,
+          c[side] >= c[enemy] ? colors.own : colors.enemy,
+          `${c[side]}:${c[enemy]}`,
+        );
+    if (cfg.pins)
+      for (const pin of a.pins) {
+        const own = pin.side === side,
+          score = own ? pin.scoreForSide : pin.scoreForEnemy;
+        mark(
+          pin.pinned,
+          own ? colors.ownPin : colors.enemyPin,
+          cfg.pinValues
+            ? `${score > 0 ? "+" : ""}${Number(score.toFixed(2))}`
+            : pin.kind === "absolute"
+              ? "P"
+              : "R",
+        );
+      }
+    for (const [flag, group, color, label] of [
+      ["hanging", a.hanging[side], colors.weak, "H"],
+      ["loose", a.loose[side], colors.weak, "L"],
+      ["vulnerableOwn", a.vulnerable[side], colors.weak, "!"],
+      ["vulnerableEnemy", a.vulnerable[enemy], colors.safe, "×"],
+    ])
+      if (cfg[flag]) group.forEach((x) => mark(x.sq, color, label));
+    if (cfg.kingSafety)
+      a.kingSafety[side]?.attacked.forEach((sq) => fill(sq, colors.enemy));
+    if (cfg.kingDiagonals)
+      a.kingSafety[side]?.openDiagonals.forEach((x) =>
+        x.ray.forEach((sq) => fill(sq, colors.weak, 0.5)),
+      );
+    if (cfg.potentialChecks)
+      a.kingSafety[side]?.potentialChecks.forEach((x) =>
+        mark(x.to, colors.enemy, "+"),
+      );
+    if (cfg.pawnStructure) {
+      a.pawns[side].passed.forEach((sq) =>
+        mark(
+          sq,
+          colors.safe,
+          a.pawns[side].protectedPassed.includes(sq) ? "PP" : "P",
+        ),
+      );
+      a.pawns[side].isolated.forEach((sq) => mark(sq, colors.weak, "I"));
+      a.pawns[side].backward.forEach((sq) => mark(sq, colors.weak, "B"));
+      a.pawns[side].weakTargets.forEach((sq) => mark(sq, colors.weak, "W"));
+    }
+    if (cfg.weakSquares)
+      a.weakSquares[side].forEach((sq) => fill(sq, colors.weak, 0.55));
+    for (const [flag, items, field, color, label, selectedSide] of [
+      ["xray", a.xrays, "target", colors.contested, "X", side],
+      ["xray", a.skewers, "front", colors.contested, "S", side],
+      ["xray", a.discovered, "blocker", colors.own, "D", side],
+      ["xray", a.batteries, "front", colors.contested, "B", side],
+      ["overloaded", a.overloaded, "sq", colors.weak, "O", enemy],
+      ["forks", a.forks, "forker", colors.own, "F", side],
+      ["forkPotential", a.forkPotential, "to", colors.safe, "F?", side],
+      ["trapped", a.trapped, "sq", colors.weak, "T", enemy],
+    ])
+      if (cfg[flag])
+        items
+          .filter((x) => x.side === selectedSide)
+          .forEach((x) => mark(x[field], color, label));
+    if (cfg.pieceContributions)
+      [...a.metrics.pieceContributions[side]]
+        .sort((x, y) => y.score - x.score)
+        .slice(0, 6)
+        .forEach((x) => mark(x.sq, colors.best, String(x.score)));
+    return shapes;
+  };
+})(globalThis);
+
+
+// Component: ChessinsperAddonPanel.js
+/* Chessinsper controls injected into the unmodified official GUI. */
+(function (root) {
+  "use strict";
+  root.ChessinsperAddonPanel = {
+    create(services, page) {
+      const ChessinsperCore = root.ChessinsperCore;
+      const SETTING_FILTER_OBJ = { profileID: "default" };
+      let connectionStatus;
+      const toast = {
+        message: (message) => {
+          if (connectionStatus) connectionStatus.textContent = message;
+        },
+        error: (message) => {
+          if (connectionStatus) connectionStatus.textContent = message;
+        },
+      };
+      function saveAs(blob, filename) {
+        const url = URL.createObjectURL(blob),
+          link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        document.body.append(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+      function selectedProfile() {
+        const value = document.querySelector(
+          '[data-key="chessEngineProfile"]',
+        )?.value;
+        if (!value) return "default";
+        if (value.startsWith("__B64__")) {
+          try {
+            return decodeURIComponent(escape(atob(value.slice(7))));
+          } catch {}
+        }
+        return value;
+      }
+      function sync() {
+        if (!storage) return;
+        const profile = selectedProfile(),
+          value = JSON.stringify(services.settings(profile));
+        if (
+          SETTING_FILTER_OBJ.profileID !== profile ||
+          storage.value !== value
+        ) {
+          SETTING_FILTER_OBJ.profileID = profile;
+          storage.value = value;
+          GM_setValue("ChessinsperAddon.SelectedProfile", profile);
+          refreshChessinsperPanel();
+        }
+      }
+
+      let storage,
+        panel,
+        activationButton,
+        sessionStatus,
+        sessionTimer,
+        saving = Promise.resolve(),
+        initialized = false;
+      const clone = (value) => JSON.parse(JSON.stringify(value));
+      const readPath = (object, path) =>
+        path.split(".").reduce((value, key) => value?.[key], object);
+      const writePath = (object, path, value) => {
+        const keys = path.split("."),
+          key = keys.pop();
+        keys.reduce((value, part) => value[part], object)[key] = value;
+      };
+
+      function control(parent, path, label, options = {}) {
+        const field = document.createElement("label");
+        field.className = "chessinsper-field";
+        const title = document.createElement("span");
+        title.textContent = label;
+        field.append(title);
+        const input = document.createElement(
+          options.options ? "select" : "input",
+        );
+        input.dataset.chessinsper = path;
+        input.setAttribute("aria-label", label);
+        if (options.options)
+          for (const [value, text] of options.options) {
+            const option = document.createElement("option");
+            option.value = value;
+            option.textContent = text;
+            input.append(option);
+          }
+        else {
+          input.type = options.type || "checkbox";
+          for (const key of ["min", "max", "step"])
+            if (options[key] != null) input[key] = options[key];
+        }
+        input.addEventListener("change", () => {
+          const value =
+            input.type === "checkbox"
+              ? input.checked
+              : input.type === "number" || input.type === "range"
+                ? Number(input.value)
+                : input.value;
+          const settings = ChessinsperCore.normalizeSettings(storage.value);
+          writePath(settings, path, value);
+          commit(settings);
+        });
+        field.append(input);
+        parent.append(field);
+        return input;
+      }
+      function group(title, open = false) {
+        const details = document.createElement("details");
+        details.open = open;
+        const summary = document.createElement("summary");
+        summary.textContent = title;
+        details.append(summary);
+        const body = document.createElement("div");
+        body.className = "chessinsper-grid";
+        details.append(body);
+        panel.append(details);
+        return body;
+      }
+      function commit(settings) {
+        const normalized = ChessinsperCore.normalizeSettings(settings),
+          profile = SETTING_FILTER_OBJ.profileID;
+        storage.value = JSON.stringify(normalized);
+        // Store synchronously before bubbling change events or polling can refresh controls.
+        saving = Promise.resolve(services.save(profile, normalized)).catch(
+          (error) => {
+            console.error("Chessinsper settings:", error);
+            toast.error("Não foi possível salvar o perfil Chessinsper.");
+          },
+        );
+        refreshChessinsperPanel();
+        return saving;
+      }
+      async function sessionStates() {
+        const profile = SETTING_FILTER_OBJ.profileID;
+        const keys = (await GM_listValues()).filter(
+          (key) =>
+            key.startsWith("ChessinsperBehavior:") &&
+            key.endsWith(":" + profile),
+        );
+        return (
+          await Promise.all(
+            keys.map(async (key) => ({ key, value: await GM_getValue(key) })),
+          )
+        ).filter((entry) => entry.value?.version === 1);
+      }
+      async function refreshSessionStatus() {
+        if (!sessionStatus) return;
+        try {
+          const states = (await sessionStates()).sort(
+            (a, b) => b.value.updatedAt - a.value.updatedAt,
+          );
+          if (!states.length) {
+            sessionStatus.textContent =
+              "Abra uma partida para acompanhar a sessão deste perfil.";
+            return;
+          }
+          sessionStatus.textContent = states
+            .map(({ key, value }) => {
+              const s = value.status;
+              const wait =
+                s.waitUntil > Date.now()
+                  ? ` · ${Math.ceil((s.waitUntil - Date.now()) / 1000)} s`
+                  : "";
+              const stale =
+                Date.now() - value.updatedAt > 30000
+                  ? " · último estado salvo"
+                  : "";
+              return `${key.split(":")[1]} · ${s.reason}${wait}${stale}\n${s.games} partidas · ${s.wins} vitórias / ${s.losses} derrotas / ${s.draws} empates${s.unknown ? ` / ${s.unknown} sem resultado identificado` : ""}\nELO efetivo ${s.effectiveRating} · ${s.totalGames} partidas no histórico · ${s.moves} lances · perda média ${s.averageCPLoss} cp · ${s.recoveries} retomadas AFK`;
+            })
+            .join("\n\n");
+        } catch (error) {
+          console.warn("Chessinsper session status:", error);
+        }
+      }
+      async function sessionCommand(type) {
+        const states = await sessionStates();
+        for (const { key } of states)
+          GM_setValue(key + ":command", {
+            type,
+            id: `${Date.now()}:${Math.random()}`,
+          });
+        if (!states.length)
+          toast.message("Abra uma partida para controlar a sessão.");
+        else toast.message("Comando enviado à sessão deste perfil.");
+      }
+      function refreshChessinsperPanel() {
+        if (!storage || !panel) return;
+        const settings = ChessinsperCore.normalizeSettings(storage.value);
+        for (const input of panel.querySelectorAll("[data-chessinsper]")) {
+          const value = readPath(settings, input.dataset.chessinsper);
+          if (input.type === "checkbox") input.checked = !!value;
+          else input.value = value;
+        }
+        panel.classList.toggle("chessinsper-disabled", !settings.enabled);
+        void refreshSessionStatus();
+        if (activationButton) {
+          activationButton.disabled = !SETTING_FILTER_OBJ.profileID;
+          activationButton.textContent = settings.enabled
+            ? "Chessinsper ativo · Desativar"
+            : "Ativar Chessinsper";
+          activationButton.setAttribute(
+            "aria-pressed",
+            String(settings.enabled),
+          );
+          activationButton.title = `Perfil: ${SETTING_FILTER_OBJ.profileID || "padrão"}`;
+        }
+        // Show one set of style and arrow controls while this profile owns them.
+        for (const key of [
+          "engineElo",
+          "candidatePoolSize",
+          "playStyle",
+          "aggressionLevel",
+          "riskLevel",
+          "autoMove",
+          "autoMoveAfterUser",
+          "autoMoveLegit",
+          "autoMoveRandom",
+          "arrowOpacity",
+          "primaryArrowColorHex",
+          "secondaryArrowColorHex",
+          "opponentArrowColorHex",
+          "showOpponentMoveGuess",
+          "showOpponentMoveGuessConstantly",
+          "moveSuggestionAmount",
+        ]) {
+          const input = document.querySelector(`input[data-key="${key}"]`);
+          const field = input?.closest(".custom-input");
+          if (field)
+            field.classList.toggle(
+              "chessinsper-native-hidden",
+              settings.enabled,
+            );
+        }
+      }
+      function initializeChessinsperPanel() {
+        if (initialized) return;
+        initialized = true;
+        activationButton = document.createElement("button");
+        activationButton.id = "chessinsper-activate";
+        activationButton.type = "button";
+        activationButton.className = "chessinsper-activate";
+        activationButton.setAttribute("aria-controls", "chessinsper-panel");
+        activationButton.addEventListener("click", async () => {
+          const settings = ChessinsperCore.normalizeSettings(storage.value);
+          settings.enabled = !settings.enabled;
+          await commit(settings);
+          if (settings.enabled) {
+            panel.scrollIntoView({ behavior: "smooth", block: "start" });
+            panel.querySelector("details").open = true;
+          }
+        });
+        document.body.append(activationButton);
+        panel = document.createElement("section");
+        panel.id = "chessinsper-panel";
+        panel.className = "setting-panel chessinsper-panel";
+        const heading = document.createElement("div");
+        heading.className = "setting-panel-title";
+        heading.textContent = "Chessinsper · Personalidade, visual e automação";
+        panel.append(heading);
+        const note = document.createElement("p");
+        note.className = "chessinsper-description";
+        note.textContent =
+          "Configure o comportamento deste perfil com a engine escolhida acima. Os controles Chessinsper são salvos separadamente para este perfil.";
+        panel.append(note);
+        storage = document.createElement("input");
+        storage.type = "hidden";
+        storage.dataset.csStorage = "true";
+        storage.dataset.defaultValue = JSON.stringify(
+          ChessinsperCore.defaults(),
+        );
+        SETTING_FILTER_OBJ.profileID = selectedProfile();
+        storage.value = JSON.stringify(
+          services.settings(SETTING_FILTER_OBJ.profileID),
+        );
+        GM_setValue(
+          "ChessinsperAddon.SelectedProfile",
+          SETTING_FILTER_OBJ.profileID,
+        );
+        panel.append(storage);
+        control(panel, "enabled", "Usar funções Chessinsper neste perfil");
+        const engine = group("Força e análise", true);
+        control(engine, "engineUI.strength", "Força do perfil (ELO)", {
+          type: "number",
+          min: 400,
+          max: 3000,
+          step: 50,
+        });
+        control(engine, "engineUI.analysisQuality", "Qualidade da análise", {
+          options: [
+            ["fast", "Rápida"],
+            ["balanced", "Equilibrada"],
+            ["deep", "Profunda"],
+          ],
+        });
+        control(engine, "engineUI.depthMode", "Profundidade", {
+          options: [
+            ["auto", "Adaptar ao perfil"],
+            ["manual", "Manual"],
+          ],
+        });
+        control(engine, "engineUI.manualDepth", "Profundidade manual", {
+          type: "number",
+          min: 1,
+          max: 22,
+          step: 1,
+        });
+        control(engine, "engineUI.candidateMoves", "Candidatos para comparar", {
+          type: "number",
+          min: 1,
+          max: 20,
+          step: 1,
+        });
+        control(engine, "engineUI.playingStyle", "Estilo de jogo", {
+          options: [
+            ["universal", "Universal"],
+            ["aggressive", "Agressivo"],
+            ["tactical", "Tático"],
+            ["positional", "Posicional"],
+            ["defensive", "Defensivo"],
+            ["endgame_specialist", "Especialista em finais"],
+          ],
+        });
+        control(engine, "engineUI.humanMode", "Seleção humana de candidatos");
+        control(
+          engine,
+          "engineUI.eloCalibration",
+          "Calibrar qualidade pelo ELO",
+        );
+        control(
+          engine,
+          "engineUI.openingBook",
+          "Preferir candidatos do repertório",
+        );
+        const preset = document.createElement("select");
+        preset.setAttribute("aria-label", "Preset Chessinsper");
+        const defaultOption = document.createElement("option");
+        defaultOption.textContent = "Aplicar preset…";
+        defaultOption.value = "";
+        preset.append(defaultOption);
+        const presets = ChessinsperCore.createRuntime().presets;
+        for (const name of Object.keys(presets)) {
+          const option = document.createElement("option");
+          option.value = name;
+          option.textContent = name;
+          preset.append(option);
+        }
+        preset.addEventListener("change", () => {
+          if (!presets[preset.value]) return;
+          const s = ChessinsperCore.normalizeSettings(storage.value),
+            p = presets[preset.value];
+          s.engineUI = {
+            ...s.engineUI,
+            ...clone(p),
+            personality: { ...s.engineUI.personality, ...p.personality },
+            advanced: { ...s.engineUI.advanced, ...p.advanced },
+          };
+          commit(s);
+          preset.value = "";
+        });
+        engine.append(preset);
+        const personality = group("Personalidade e precisão");
+        for (const [key, label] of Object.entries({
+          creativity: "Criatividade",
+          risk: "Risco",
+          tactical: "Tática",
+          positional: "Posicional",
+          kingSafety: "Segurança do rei",
+          materialInitiative: "Iniciativa sobre material",
+          attackPreference: "Preferência por ataques",
+          exchangePreference: "Preferência por trocas",
+          queenTradePreference: "Troca de damas",
+          simplification: "Simplificação",
+        }))
+          control(personality, `engineUI.personality.${key}`, label, {
+            type: "number",
+            min: 0,
+            max: 100,
+            step: 5,
+          });
+        for (const [key, label] of Object.entries({
+          openingStrength: "Força na abertura (%)",
+          middlegameStrength: "Força no meio-jogo (%)",
+          endgameStrength: "Força no final (%)",
+          consistency: "Consistência",
+          mistakeSeverity: "Intensidade dos erros",
+          alternativeQuality: "Qualidade das alternativas",
+          humanVariation: "Variação humana",
+          movePrecision: "Precisão",
+        }))
+          control(personality, `engineUI.advanced.${key}`, label, {
+            type: "number",
+            min: key.endsWith("Strength") ? 70 : 0,
+            max: key.endsWith("Strength") ? 125 : 100,
+            step: 5,
+          });
+        control(
+          personality,
+          "engineUI.advanced.mistakeProfile",
+          "Perfil de erros",
+          {
+            options: [
+              ["off", "Sem erros intencionais"],
+              ["rare", "Raros"],
+              ["natural", "Naturais"],
+              ["frequent", "Frequentes"],
+            ],
+          },
+        );
+        for (const [key, label] of Object.entries({
+          comebackMode: "Adaptação em desvantagem",
+          conversionMode: "Converter vantagem",
+          criticalBoost: "Mais análise em posições críticas",
+          easyRelaxation: "Menos análise em posições simples",
+          autoBalance: "Equilibrar o perfil automaticamente",
+        }))
+          control(personality, `engineUI.advanced.${key}`, label);
+        const arrows = group("Setas e leitura do tabuleiro");
+        control(arrows, "visualIntelligence.enabled", "Exibir leitura visual");
+        control(arrows, "visualIntelligence.maxArrows", "Limite de setas", {
+          type: "number",
+          min: 0,
+          max: 20,
+          step: 1,
+        });
+        control(arrows, "visualIntelligence.arrowScale", "Tamanho das setas", {
+          type: "number",
+          min: 0.25,
+          max: 2,
+          step: 0.05,
+        });
+        control(arrows, "visualIntelligence.lineWidth", "Espessura das setas", {
+          type: "number",
+          min: 0.5,
+          max: 8,
+          step: 0.5,
+        });
+        control(
+          arrows,
+          "visualIntelligence.arrowOpacity",
+          "Opacidade das setas (%)",
+          { type: "number", min: 0, max: 100, step: 5 },
+        );
+        control(arrows, "visualIntelligence.pieceFilter", "Mostrar setas de", {
+          options: [
+            ["all", "Todas as peças"],
+            ["p", "Peões"],
+            ["n", "Cavalos"],
+            ["b", "Bispos"],
+            ["r", "Torres"],
+            ["q", "Damas"],
+            ["k", "Rei"],
+          ],
+        });
+        for (const [key, label] of Object.entries({
+          bestMove: "Lance escolhido",
+          alternatives: "Alternativas",
+          threats: "Resposta do adversário",
+          showOnlyOwnTurn: "Visual apenas na minha vez",
+          pins: "Peças cravadas",
+          pinValues: "Valor das cravadas",
+          hanging: "Peças penduradas",
+          loose: "Peças sem defesa",
+          vulnerableOwn: "Minhas peças vulneráveis",
+          vulnerableEnemy: "Peças adversárias vulneráveis",
+          ownVision: "Controle das minhas peças",
+          enemyVision: "Controle adversário",
+          contested: "Casas disputadas",
+          safeSquares: "Casas seguras",
+          neutralSquares: "Casas neutras",
+          controlIntensity: "Intensidade do controle",
+          attackerDefenderBalance: "Atacantes × defensores",
+          kingSafety: "Segurança do rei",
+          kingDiagonals: "Diagonais do rei",
+          potentialChecks: "Xeques possíveis",
+          pawnStructure: "Estrutura de peões",
+          weakSquares: "Casas fracas",
+          xray: "Raios-X e ataques descobertos",
+          overloaded: "Peças sobrecarregadas",
+          forks: "Garfos",
+          forkPotential: "Garfos possíveis",
+          trapped: "Peças presas",
+          pieceContributions: "Contribuição das peças",
+        }))
+          control(arrows, `visualIntelligence.${key}`, label);
+        control(
+          arrows,
+          "visualIntelligence.markerOpacity",
+          "Opacidade das marcações",
+          { type: "number", min: 0, max: 1, step: 0.05 },
+        );
+        control(
+          arrows,
+          "visualIntelligence.markerScale",
+          "Tamanho das marcações",
+          {
+            type: "number",
+            min: 0.25,
+            max: 2,
+            step: 0.05,
+          },
+        );
+        for (const [key, label] of Object.entries({
+          best: "Cor do lance escolhido",
+          alt: "Cor das alternativas",
+          response: "Cor da resposta",
+          own: "Cor do controle próprio",
+          enemy: "Cor do controle adversário",
+          contested: "Cor das casas disputadas",
+          safe: "Cor das casas seguras",
+          neutral: "Cor das casas neutras",
+          ownPin: "Cor das minhas cravadas",
+          enemyPin: "Cor das cravadas adversárias",
+          weak: "Cor de vulnerabilidade",
+        }))
+          control(arrows, `visualIntelligence.colors.${key}`, label, {
+            type: "color",
+          });
+        const automation = group("Automação");
+        control(
+          automation,
+          "automation.enabled",
+          "Executar lances automaticamente",
+        );
+        control(
+          automation,
+          "automation.afterUser",
+          "Começar após meu primeiro lance",
+        );
+        control(automation, "automation.method", "Execução do lance", {
+          options: [
+            ["mixed", "Alternar clique e arraste"],
+            ["click", "Clique"],
+            ["drag", "Arraste"],
+          ],
+        });
+        control(automation, "dragSpeed", "Duração do arraste (multiplicador)", {
+          type: "number",
+          min: 0.25,
+          max: 3,
+          step: 0.25,
+        });
+        control(automation, "automation.minDelayMs", "Espera mínima (ms)", {
+          type: "number",
+          min: 0,
+          max: 60000,
+          step: 100,
+        });
+        control(automation, "automation.maxDelayMs", "Espera máxima (ms)", {
+          type: "number",
+          min: 0,
+          max: 60000,
+          step: 100,
+        });
+        control(
+          automation,
+          "automation.clockAware",
+          "Adaptar a espera ao relógio",
+        );
+        control(
+          automation,
+          "inputExecution.maxAttempts",
+          "Tentativas por lance",
+          {
+            type: "number",
+            min: 1,
+            max: 3,
+            step: 1,
+          },
+        );
+        control(
+          automation,
+          "inputExecution.confirmationTimeoutMs",
+          "Tempo para confirmar o lance (ms)",
+          { type: "number", min: 200, max: 5000, step: 100 },
+        );
+        const sessions = group("Sessões, fila e AFK");
+        control(sessions, "session.enabled", "Aplicar limites de sessão");
+        control(
+          sessions,
+          "session.autoQueue",
+          "Nova partida automática (requer execução de lances)",
+        );
+        for (const [path, label, min, max, step] of [
+          ["session.maxGamesPerSession", "Partidas por sessão", 1, 100, 1],
+          [
+            "session.breakDurationMs",
+            "Intervalo de sessão (ms)",
+            1000,
+            86400000,
+            1000,
+          ],
+          [
+            "session.maxWinStreak",
+            "Pausar após vitórias seguidas (0 = desligado)",
+            0,
+            100,
+            1,
+          ],
+          ["session.maxGamesPerHour", "Partidas por hora", 1, 100, 1],
+          [
+            "session.betweenGamesMs.min",
+            "Pausa mínima entre partidas (ms)",
+            0,
+            300000,
+            1000,
+          ],
+          [
+            "session.betweenGamesMs.max",
+            "Pausa máxima entre partidas (ms)",
+            0,
+            300000,
+            1000,
+          ],
+        ])
+          control(sessions, path, label, { type: "number", min, max, step });
+        control(
+          sessions,
+          "tcLock.enabled",
+          "Manter o ritmo de jogo durante a sessão",
+        );
+        control(
+          sessions,
+          "afk.enabled",
+          "Recuperar sessão após AFK ou suspensão",
+        );
+        control(
+          sessions,
+          "afk.localKeepAlive",
+          "Pulso WebRTC local para segundo plano",
+        );
+        const afkNote = document.createElement("p");
+        afkNote.className = "chessinsper-description";
+        afkNote.textContent =
+          "O AFK retoma o estado salvo quando o navegador permite. No celular, mantenha o painel aberto: o sistema pode suspender as abas. O pulso local é opcional e pode aumentar o consumo de bateria.";
+        sessions.append(afkNote);
+        sessionStatus = document.createElement("div");
+        sessionStatus.id = "chessinsper-session-status";
+        sessionStatus.className = "chessinsper-session-status";
+        sessionStatus.setAttribute("aria-live", "polite");
+        sessions.append(sessionStatus);
+        const sessionActions = document.createElement("div");
+        sessionActions.className = "chessinsper-actions";
+        for (const [type, label] of [
+          ["pause", "Pausar sessão"],
+          ["resume", "Retomar sessão"],
+          ["reset", "Reiniciar sessão"],
+        ]) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.textContent = label;
+          button.onclick = () => sessionCommand(type);
+          sessionActions.append(button);
+        }
+        sessions.append(sessionActions);
+        const account = group("Comportamento entre partidas");
+        control(account, "warmup.enabled", "Aquecimento gradual do ELO");
+        control(
+          account,
+          "warmup.manualOverride",
+          "Usar ELO configurado durante o aquecimento",
+        );
+        control(account, "warmup.durationGames", "Partidas para aquecer", {
+          type: "number",
+          min: 1,
+          max: 100,
+          step: 1,
+        });
+        control(account, "warmup.startEloOffset", "Redução inicial de ELO", {
+          type: "number",
+          min: -1000,
+          max: 0,
+          step: 50,
+        });
+        control(
+          account,
+          "weaknessProfile.enabled",
+          "Fraquezas e ritmo consistentes por perfil",
+        );
+        control(account, "seed", "Semente da personalidade", { type: "text" });
+        control(account, "tilt.enabled", "Variar comportamento após derrota");
+        control(
+          account,
+          "tilt.durationGames",
+          "Partidas de variação após derrota",
+          {
+            type: "number",
+            min: 1,
+            max: 10,
+            step: 1,
+          },
+        );
+        control(
+          account,
+          "tilt.suboptimalBoost",
+          "Variação extra na escolha (0 a 0,3)",
+          { type: "number", min: 0, max: 0.3, step: 0.01 },
+        );
+        control(
+          account,
+          "tilt.timingMult",
+          "Espera após derrota (multiplicador)",
+          {
+            type: "number",
+            min: 0.5,
+            max: 3,
+            step: 0.1,
+          },
+        );
+        control(
+          account,
+          "hardwarePersona.enabled",
+          "Personalidade de clique e arraste",
+        );
+        control(
+          account,
+          "opponentAdaptation.enabled",
+          "Adaptar ELO ao adversário após aquecimento",
+        );
+        control(
+          account,
+          "opponentAdaptation.ratingEdge",
+          "Diferença de ELO sobre o adversário",
+          { type: "number", min: -500, max: 500, step: 50 },
+        );
+        control(
+          account,
+          "annotations.enabled",
+          "Anotar candidatos durante reflexão longa",
+        );
+        control(
+          account,
+          "annotations.minThinkMs",
+          "Reflexão mínima para anotar (ms)",
+          { type: "number", min: 1000, max: 60000, step: 500 },
+        );
+        control(
+          account,
+          "annotations.chancePerLongThink",
+          "Chance de anotação (0 a 1)",
+          { type: "number", min: 0, max: 1, step: 0.1 },
+        );
+        control(
+          account,
+          "autoResign.enabled",
+          "Abandonar automaticamente em posição perdida",
+        );
+        control(
+          account,
+          "autoResign.evalThreshold",
+          "Avaliação para abandono (peões)",
+          { type: "number", min: -30, max: -0.5, step: 0.5 },
+        );
+        control(
+          account,
+          "autoResign.consecutiveMoves",
+          "Posições perdidas seguidas para abandonar",
+          { type: "number", min: 1, max: 20, step: 1 },
+        );
+        control(
+          account,
+          "autoResign.minMoveNumber",
+          "Número mínimo do lance para abandono",
+          { type: "number", min: 1, max: 100, step: 1 },
+        );
+        control(
+          account,
+          "autoResign.resignChance",
+          "Chance de abandono (0 a 1)",
+          {
+            type: "number",
+            min: 0,
+            max: 1,
+            step: 0.1,
+          },
+        );
+        control(
+          account,
+          "winrateTarget.enabled",
+          "Adaptar força à taxa recente de vitórias",
+        );
+        control(
+          account,
+          "winrateTarget.target",
+          "Taxa de vitórias alvo (0 a 1)",
+          {
+            type: "number",
+            min: 0,
+            max: 1,
+            step: 0.01,
+          },
+        );
+        control(
+          account,
+          "winrateTarget.sampleGames",
+          "Partidas consideradas na taxa",
+          { type: "number", min: 2, max: 50, step: 1 },
+        );
+        control(
+          account,
+          "idleMouse.enabled",
+          "Movimento do cursor durante espera",
+        );
+        control(
+          account,
+          "idleMouse.triggerAfterMs",
+          "Espera antes de mover o cursor (ms)",
+          { type: "number", min: 1000, max: 60000, step: 500 },
+        );
+        control(account, "postGame.enabled", "Pausa de revisão após a partida");
+        control(
+          account,
+          "postGame.reviewChance",
+          "Chance de pausa de revisão (0 a 1)",
+          { type: "number", min: 0, max: 1, step: 0.05 },
+        );
+        for (const [key, label] of [
+          ["min", "Revisão mínima (ms)"],
+          ["max", "Revisão máxima (ms)"],
+        ])
+          control(account, `postGame.reviewDurationMs.${key}`, label, {
+            type: "number",
+            min: 0,
+            max: 300000,
+            step: 1000,
+          });
+        const coach = group("Coach e estudo");
+        control(coach, "coach.enabled", "Ativar Coach");
+        control(
+          coach,
+          "coach.disableAutoOnEnable",
+          "Suspender execução automática durante Coach",
+        );
+        control(
+          coach,
+          "coach.showAlternatives",
+          "Explicar alternativas próximas",
+        );
+        control(coach, "coach.showThreats", "Mostrar resposta prevista");
+        control(
+          coach,
+          "coach.showHangingPieces",
+          "Incluir peças penduradas nas marcações",
+        );
+        control(
+          coach,
+          "coach.altEvalWindow",
+          "Diferença máxima das alternativas (peões)",
+          { type: "number", min: 0, max: 5, step: 0.1 },
+        );
+        const actions = document.createElement("div");
+        actions.className = "chessinsper-actions";
+        const importButton = document.createElement("button");
+        importButton.type = "button";
+        importButton.textContent = "Importar Chessinsper";
+        const exportButton = document.createElement("button");
+        exportButton.type = "button";
+        exportButton.textContent = "Exportar Chessinsper";
+        const file = document.createElement("input");
+        file.type = "file";
+        file.accept = ".json,application/json";
+        file.hidden = true;
+        importButton.onclick = () => file.click();
+        file.onchange = async () => {
+          try {
+            if (!file.files[0]) return;
+            const json = JSON.parse(await file.files[0].text());
+            if (!json || (!json.engineUI && !json.chessinsper))
+              throw new Error(
+                "Selecione um JSON de configurações do Chessinsper.",
+              );
+            const input = json.chessinsper || json;
+            if (input.timing?.base)
+              input.automation = {
+                ...input.automation,
+                minDelayMs: input.timing.base.min,
+                maxDelayMs: input.timing.base.max,
+              };
+            await commit(input);
+            toast.message("Perfil Chessinsper importado.");
+          } catch (error) {
+            toast.error(error.message);
+          } finally {
+            file.value = "";
+          }
+        };
+        exportButton.onclick = () =>
+          saveAs(
+            new Blob(
+              [
+                JSON.stringify(
+                  ChessinsperCore.normalizeSettings(storage.value),
+                  null,
+                  2,
+                ),
+              ],
+              { type: "application/json" },
+            ),
+            "chessinsper-profile.json",
+          );
+        actions.append(importButton, exportButton, file);
+        panel.append(actions);
+        connectionStatus = document.createElement("p");
+        connectionStatus.className = "chessinsper-description";
+        connectionStatus.id = "chessinsper-connection";
+        connectionStatus.setAttribute("role", "status");
+        connectionStatus.textContent = "Conectando ao A.C.A.S oficial…";
+        heading.after(connectionStatus);
+        const host =
+          document.querySelector("#settings-panels") ||
+          document.querySelector("#main-setting-panel") ||
+          document.body;
+        host.append(panel);
+        const logo = document.querySelector("#acas-logo-secondary");
+        if (logo) logo.classList.add("chessinsper-brand");
+        document.addEventListener("change", sync);
+        storage.addEventListener("change", refreshChessinsperPanel);
+        refreshChessinsperPanel();
+        sessionTimer = setInterval(() => {
+          if (!document.hidden) void refreshSessionStatus();
+        }, 3000);
+        window.addEventListener("pagehide", () => clearInterval(sessionTimer), {
+          once: true,
+        });
+      }
+
+      return {
+        initialize() {
+          if (!document.querySelector("#chessinsper-addon-style")) {
+            const style = document.createElement("style");
+            style.id = "chessinsper-addon-style";
+            style.textContent =
+              '.chessinsper-panel {\n  border-left: 3px solid #e53935;\n}\n.chessinsper-brand::before {\n  content: "Chessinsper · ";\n}\n.chessinsper-activate {\n  position: fixed;\n  right: calc(16px + env(safe-area-inset-right, 0px));\n  bottom: calc(16px + env(safe-area-inset-bottom, 0px));\n  z-index: 25;\n  min-height: 48px;\n  max-width: calc(100vw - 32px);\n  padding: 12px 18px;\n  border: 1px solid #e53935;\n  border-radius: 24px;\n  background: #28282c;\n  color: #fff;\n  font: inherit;\n  font-size: 0.9rem;\n  box-shadow: 0 4px 16px #0006;\n  cursor: pointer;\n  touch-action: manipulation;\n}\n.chessinsper-activate[aria-pressed="true"] {\n  background: #b72c2c;\n}\n.chessinsper-activate:focus-visible {\n  outline: 3px solid #fff;\n  outline-offset: 3px;\n}\n.chessinsper-panel {\n  scroll-margin-block: 16px;\n  scroll-margin-block-start: 96px;\n  padding-bottom: 76px;\n}\n.chessinsper-description {\n  font-size: 0.85rem;\n  line-height: 1.5;\n  opacity: 0.78;\n  margin: 8px 0 16px;\n}\n.chessinsper-panel details {\n  border-top: 1px solid #ffffff20;\n  padding: 12px 0;\n}\n.chessinsper-panel summary {\n  cursor: pointer;\n  font-weight: 600;\n  padding: 6px 0;\n}\n.chessinsper-grid {\n  display: grid;\n  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));\n  gap: 12px 18px;\n  padding-top: 14px;\n}\n.chessinsper-field {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 12px;\n  font-size: 0.84rem;\n  line-height: 1.4;\n  min-height: 36px;\n}\n.chessinsper-field input:not([type="checkbox"]),\n.chessinsper-field select,\n.chessinsper-grid > select {\n  background: #0004;\n  color: inherit;\n  border: 1px solid #ffffff35;\n  border-radius: 7px;\n  padding: 7px;\n  max-width: 150px;\n  min-width: 64px;\n}\n.chessinsper-field input[type="checkbox"] {\n  accent-color: #e53935;\n  width: 18px;\n  height: 18px;\n  flex-shrink: 0;\n}\n.chessinsper-field input[type="color"] {\n  width: 56px;\n  height: 32px;\n  padding: 2px;\n}\n.chessinsper-field option {\n  background: #202024;\n  color: #eee;\n}\n.chessinsper-actions {\n  display: flex;\n  gap: 10px;\n  flex-wrap: wrap;\n  margin-top: 12px;\n}\n.chessinsper-actions button {\n  background: #e5393525;\n  color: inherit;\n  border: 1px solid #e5393580;\n  border-radius: 8px;\n  padding: 10px 14px;\n  cursor: pointer;\n}\n.chessinsper-actions button:hover {\n  background: #e5393550;\n}\n.chessinsper-disabled details {\n  opacity: 0.6;\n}\n.chessinsper-session-status {\n  grid-column: 1 / -1;\n  white-space: pre-line;\n  overflow-wrap: anywhere;\n  padding: 12px;\n  border-radius: 8px;\n  background: #0003;\n  line-height: 1.6;\n  font-size: 0.84rem;\n}\n.chessinsper-grid > .chessinsper-actions,\n.chessinsper-grid > .chessinsper-description {\n  grid-column: 1 / -1;\n}\n.instance-chessinsper-coach {\n  white-space: pre-line;\n  overflow-wrap: anywhere;\n  line-height: 1.5;\n  padding: 8px;\n  font-size: 0.82rem;\n}\n.chessinsper-native-hidden {\n  display: none !important;\n}\n@media (max-width: 700px) {\n  .chessinsper-grid {\n    grid-template-columns: 1fr;\n  }\n  .chessinsper-field input:not([type="checkbox"]),\n  .chessinsper-field select {\n    max-width: 140px;\n  }\n}\n';
+            document.head.append(style);
+          }
+          initializeChessinsperPanel();
+        },
+        sync,
+        status(message) {
+          if (connectionStatus && connectionStatus.textContent !== message)
+            connectionStatus.textContent = message;
+        },
+        stop() {
+          clearInterval(sessionTimer);
+          document.removeEventListener("change", sync);
+          document
+            .querySelectorAll(".chessinsper-native-hidden")
+            .forEach((e) => e.classList.remove("chessinsper-native-hidden"));
+          document
+            .querySelector("#acas-logo-secondary")
+            ?.classList.remove("chessinsper-brand");
+          activationButton?.remove();
+          panel?.remove();
+          document.querySelector("#chessinsper-addon-style")?.remove();
+        },
+      };
+    },
+  };
+})(globalThis);
+
+(async()=>{
+  try {
+    await LOAD_LEGACY_GM_SUPPORT();
+    if(document.readyState==='loading') await new Promise(resolve=>document.addEventListener('DOMContentLoaded',resolve,{once:true}));
+    const page=typeof unsafeWindow==='object' ? unsafeWindow : window;
+    const officialGUI=(location.hostname==='psyyke.github.io' || location.hostname==='localhost')
+      && location.pathname.includes('/A.C.A.S/') && !location.pathname.includes('/dev');
+    const app=officialGUI ? ChessinsperAddon.createGUI(page) : ChessinsperAddonSite.create(page);
+    app.start();
+    // Read-only diagnostics. Never replace the A.C.A.S USERSCRIPT storage bridge.
+    page.ChessinsperACASAddon={status:app.status};
+    window.addEventListener('pagehide',()=>app.stop(),{once:true});
+  } catch(error) {console.error('Chessinsper complemento: não foi possível iniciar.',error);}
+})();

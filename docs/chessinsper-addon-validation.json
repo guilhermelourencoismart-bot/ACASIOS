@@ -1,0 +1,24 @@
+{
+  "passed": 11,
+  "checks": [
+    "Own namespace and storage: activating companion leaves official A.C.A.S config and storage bridge intact",
+    "Floating button and all companion settings persist after reload",
+    "Standalone controls and fixed activation button fit a 390px mobile viewport",
+    "Companion settings remain independent between native profile selections, including Unicode names",
+    "Two separately scoped userscripts bind the correct board and use official Stockfish, UCI analysis and native external SVG arrows",
+    "Native autoMove is bypassed during companion control, preventing duplicate or unwanted moves",
+    "Changing arrow colors and setting zero arrows updates the official renderer without another automated move",
+    "Companion executes a legal native-engine move in a Chess.com DOM input fixture, mirrors the official board and confirms the position once",
+    "Session results persist once; pause/resume controls block and resume the local post-game queue",
+    "AFK uses a local heartbeat worker and recovers the native A.C.A.S analysis on page resume",
+    "Disabling companion stops AFK/automation and restores native A.C.A.S engine and controls"
+  ],
+  "date": "2026-10-02",
+  "companionVersion": "1.0.0",
+  "officialVersion": "2.5.0",
+  "officialCommit": "8522bf6bfb2363e666b8fd655327a39d885d0124",
+  "unitTestsPassed": 27,
+  "officialCheckoutUnmodified": true,
+  "userscriptSHA256": "4526a59d84772299d21e60184b5c2f88cc2900b99943e1ffea88381f90c50db5",
+  "scope": "Chromium local with distinct GM stores; Chess.com input fixture mirrored to the official board; no public games or physical iOS device."
+}
